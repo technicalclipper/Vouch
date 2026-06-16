@@ -1,0 +1,108 @@
+@import "tailwindcss";
+
+/* ---------- Vouch design tokens (DESIGN.md §3) ---------- */
+:root {
+  /* Color — warm neobrutalism */
+  --bg:       #FFF7EC;
+  --surface:  #FFFFFF;
+  --ink:      #1A1A1A;
+  --accent:   #4F46E5;
+  --accent-2: #00C2A8;
+  --warn:     #FF6B4A;
+  --danger:   #E5484D;
+  --muted:    #6B6B6B;
+  --soft:     #FBE8C8;
+
+  /* Borders & shadows — the neobrutalist signature */
+  --border-width: 2.5px;
+  --radius: 12px;
+  --radius-sm: 8px;
+  --radius-lg: 16px;
+
+  --shadow:       4px 4px 0 var(--ink);
+  --shadow-lg:    6px 6px 0 var(--ink);
+  --shadow-press: 2px 2px 0 var(--ink);
+}
+
+/* Map tokens into Tailwind v4's @theme so utilities like `bg-bg`,
+   `text-ink`, `border-ink`, `bg-accent` work everywhere. */
+@theme inline {
+  --color-bg:       var(--bg);
+  --color-surface:  var(--surface);
+  --color-ink:      var(--ink);
+  --color-accent:   var(--accent);
+  --color-accent-2: var(--accent-2);
+  --color-warn:     var(--warn);
+  --color-danger:   var(--danger);
+  --color-muted:    var(--muted);
+  --color-soft:     var(--soft);
+
+  --font-display: var(--font-display), "Bricolage Grotesque", "Space Grotesk", system-ui, sans-serif;
+  --font-sans:    var(--font-body),    "Inter", system-ui, sans-serif;
+
+  --radius-card:    12px;
+  --radius-card-lg: 16px;
+}
+
+html, body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-body), "Inter", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  line-height: 1.5;
+}
+
+/* Larger base on the recipient flow per DESIGN.md §3 typography */
+[data-flow="recipient"] {
+  font-size: 18px;
+  line-height: 1.55;
+}
+[data-flow="creator"] {
+  font-size: 15px;
+}
+
+/* Headings default to the display font */
+h1, h2, h3, h4 {
+  font-family: var(--font-display), "Bricolage Grotesque", "Space Grotesk", system-ui, sans-serif;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+
+/* ---------- Neobrutalist primitives as utilities ---------- */
+
+@utility nb-border {
+  border: var(--border-width) solid var(--ink);
+}
+@utility nb-shadow {
+  box-shadow: var(--shadow);
+}
+@utility nb-shadow-lg {
+  box-shadow: var(--shadow-lg);
+}
+@utility nb-shadow-press {
+  box-shadow: var(--shadow-press);
+}
+
+/* Pressable behavior — translate + collapse shadow on :active.
+   DESIGN.md §7: "Press feedback on every button" is non-negotiable. */
+@utility nb-pressable {
+  transition: transform 60ms ease-out, box-shadow 60ms ease-out;
+  will-change: transform, box-shadow;
+}
+.nb-pressable:active {
+  transform: translate(2px, 2px);
+  box-shadow: var(--shadow-press);
+}
+
+/* Focus ring that matches the brutalist look (no soft glow) */
+@utility nb-focus {
+  outline: none;
+}
+.nb-focus:focus-visible {
+  outline: 3px solid var(--ink);
+  outline-offset: 3px;
+}
