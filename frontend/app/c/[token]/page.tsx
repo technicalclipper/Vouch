@@ -17,7 +17,7 @@ export default function RecipientPage({
   return (
     <div
       data-flow="recipient"
-      className="mx-auto w-full max-w-[480px] px-5 py-8 sm:py-10"
+      className="mx-auto w-full max-w-[520px] px-5 py-10 sm:py-14 lg:py-20"
     >
       {!ready ? null : !cap ? (
         <NotFound />
