@@ -6,6 +6,7 @@
   "description": "Vouch CLI integration scripts: day-0 throwaway tx, capability lifecycle smoke test, executor reference PTBs.",
   "scripts": {
     "lifecycle": "tsx lifecycle.ts",
+    "deepbook": "tsx deepbook-smoke.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
