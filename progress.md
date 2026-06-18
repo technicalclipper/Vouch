@@ -86,13 +86,24 @@
 
 ## Not yet started
 
-### Stage 0 — Kill the unknowns (CLAUDE.md §9)
-- Confirm Deepbook v3 testnet package ID, USDC/SUI pool ID, exact USDC coin type, DEEP coin type.
-- Get testnet SUI / USDC / DEEP into a dev wallet.
-- Place ONE manual Deepbook v3 market order from a throwaway script.
-- Enoki: API key, "Sign in with Google → show address" smoke test.
-- Pyth SUI/USD feed sanity check.
-- Fill `shared/config.ts`.
+### Stage 0 — Kill the unknowns (CLAUDE.md §9) — **partially done**
+
+**Done:**
+- All Deepbook v3 testnet + Pyth testnet addresses confirmed against the @mysten/deepbook-v3 SDK v1.5.1 constants file (the canonical source Mysten ships) and recorded in `shared/config.ts`:
+  - Deepbook package: `0x22be4cade64bf2d02412c7e8d0e8beea2f78828b948118d46735315409371a3c`
+  - Registry: `0x7c256edbda983a2cd6f946655f4bf3f00a41043993781f8674a7046e8c0e11d1`
+  - DEEP treasury: `0x69fffdae0075f8f71f4fa793549c11079266910e8905169845af1f5d00e09dcb`
+  - **Testnet "USDC" = DBUSDC** (Mysten ships a test stablecoin, not real USDC): type `0xf7152c05930480cd740d7311b5b8b45c6f488e3a53a11c3f74a6fac36a52e0d7::DBUSDC::DBUSDC`, scalar 1e6
+  - Testnet DEEP: `0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8::deep::DEEP`, scalar 1e6
+  - **Pool** SUI_DBUSDC (base=SUI, quote=DBUSDC): `0x1c19362ca52b8ffd7a33cee805a67d40f31e6ba303753fd3a4cfdfacea7163a5`
+  - Pyth testnet state: `0x243759059f4c3111179da5878c12f68d612c21a8d54d85edc86164bb18be1c7c`; SUI/USD feed `0x50c67b3fd225db8912a424dd4baed60ffdde625ed2feaaf283724f9608fea266`; priceInfoObject `0x1ebb295c789cc42b3b2a1606482cd1c7124076a0f5676718501fda8c7fd075a0`
+- `scripts/deepbook-smoke.ts` written with two modes (`init`, `trade`). PTB shapes taken verbatim from `@mysten/deepbook-v3` SDK so ABI matches the deployed package.
+- **BalanceManager created on testnet**: `0xfec1aab79f151bbff6a225cb54c5299ce5821e59124f655119f7c14083abdad7` (tx `4dhH1NLTuqYTveQWjGonR5DGdFJck1XQatyjksSp6aho`). Recorded in config.
+
+**Blocked / not yet done:**
+- **Manual Deepbook market order** — script ready (`npm run deepbook -- trade`) but blocked on getting testnet DBUSDC and DEEP into the dev wallet. Neither token has a public mint (the `dusdc` module only transfers the treasury cap to the deployer; the DEEP testnet `init` minted to Mysten's deployer). Mysten gates testnet token distribution via the "DeepBook Predict Testnet token request form" (Google form / Discord) — needs human action.
+- **Enoki API key** — required for Stage 3 zkLogin activation PTB. Not yet provisioned.
+- **Pyth SUI/USD feed sanity check** — feed ID + priceInfoObject recorded; haven't yet read the price on chain. Easy to do once Stage 4 lands.
 
 ### Stage 2 — Executor backend (CLAUDE.md §5)
 - Node/TS service holding the agent keypair.
@@ -130,7 +141,9 @@
 ## Blockers / unknowns
 
 - ~~**Sui CLI not installed**~~ — installed; package built and published to testnet. (See Done above.)
-- **Deepbook v3 testnet pool liquidity** — spec warns it's thin or empty; a maker-side liquidity seeder will likely be needed before any real-trade demo.
+- **Testnet DBUSDC + DEEP** — no public mint on either module. Mysten gates testnet token requests via a form/Discord channel. Blocks the manual Deepbook market order (CLAUDE.md §9 Stage 0) and Stage 2's first real trade.
+- **Deepbook v3 testnet pool liquidity** — spec warns it's thin or empty; a maker-side liquidity seeder will likely be needed before any real-trade demo even once we hold tokens.
+- **Enoki API key** — needed for the Stage 3 zkLogin activation PTB.
 - **Pyth testnet feeds** — may be stale/flat; demo-mode override must exist.
 - **Exact testnet USDC coin type** — must match the chosen Deepbook pool exactly.
 
