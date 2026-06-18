@@ -1,0 +1,16 @@
+[package]
+name = "Vouch"
+edition = "2024.beta"
+# License-irrelevant; this is a hackathon prototype.
+
+[dependencies]
+Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "framework/testnet" }
+
+[addresses]
+# The package address. `0x0` is the publish-time placeholder; after
+# `sui client publish`, copy the assigned package ID into `shared/config.ts`
+# (and never hardcode it inline — CLAUDE.md §8 / §12).
+vouch = "0x0"
+
+[dev-addresses]
+vouch = "0x0"
