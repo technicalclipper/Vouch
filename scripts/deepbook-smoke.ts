@@ -96,17 +96,22 @@ async function marketBuy(client: SuiClient, kp: Ed25519Keypair) {
     );
   }
 
+  // Default to input-coin fees so we don't require testnet DEEP (which has
+  // no public faucet). Pass `--with-deep` to force DEEP fees instead.
+  const payWithDeep = process.argv.includes("--with-deep");
+
   // Tiny amounts so we don't fight thin testnet liquidity.
   // quantity is in BASE units (SUI) — we're buying SUI with DBUSDC.
   // 0.01 SUI = 10_000_000 MIST. Cap DBUSDC deposit at 1 DBUSDC = 1_000_000
-  // micro-DBUSDC (6 dp). DEEP for fees: 1 DEEP = 1_000_000 micro-DEEP.
+  // micro-DBUSDC (6 dp). DEEP for fees only if payWithDeep is true.
   const SUI_BUY_QUANTITY = 10_000_000n; // 0.01 SUI worth of base, in SUI scalar
   const DBUSDC_DEPOSIT = 1_000_000n; // 1 DBUSDC
-  const DEEP_DEPOSIT = 1_000_000n; // 1 DEEP
+  const DEEP_DEPOSIT = 1_000_000n; // 1 DEEP — only deposited if payWithDeep
 
   const tx = new Transaction();
 
-  // 1. Deposit DBUSDC (the quote we're spending).
+  // 1. Deposit DBUSDC (the quote we're spending — also covers the fee when
+  //    payWithDeep is false).
   tx.moveCall({
     target: `${CONFIG.deepbook.packageId}::balance_manager::deposit`,
     typeArguments: [CONFIG.deepbook.usdcType],
@@ -116,15 +121,17 @@ async function marketBuy(client: SuiClient, kp: Ed25519Keypair) {
     ],
   });
 
-  // 2. Deposit DEEP (to pay fees with).
-  tx.moveCall({
-    target: `${CONFIG.deepbook.packageId}::balance_manager::deposit`,
-    typeArguments: [CONFIG.deepbook.deepType],
-    arguments: [
-      tx.object(bmId),
-      coinWithBalance({ type: CONFIG.deepbook.deepType, balance: DEEP_DEPOSIT }),
-    ],
-  });
+  // 2. Deposit DEEP only when paying fees in DEEP.
+  if (payWithDeep) {
+    tx.moveCall({
+      target: `${CONFIG.deepbook.packageId}::balance_manager::deposit`,
+      typeArguments: [CONFIG.deepbook.deepType],
+      arguments: [
+        tx.object(bmId),
+        coinWithBalance({ type: CONFIG.deepbook.deepType, balance: DEEP_DEPOSIT }),
+      ],
+    });
+  }
 
   // 3. Generate the trade proof.
   const proof = tx.moveCall({
@@ -133,7 +140,6 @@ async function marketBuy(client: SuiClient, kp: Ed25519Keypair) {
   });
 
   // 4. Place a market BUY on SUI_DBUSDC. isBid=true means buy base with quote.
-  // payWithDeep=true so DEEP funds the fee.
   tx.moveCall({
     target: `${CONFIG.deepbook.packageId}::pool::place_market_order`,
     typeArguments: [CONFIG.deepbook.suiType, CONFIG.deepbook.usdcType],
@@ -145,18 +151,15 @@ async function marketBuy(client: SuiClient, kp: Ed25519Keypair) {
       tx.pure.u8(0), // self_matching_option: SELF_MATCHING_ALLOWED
       tx.pure.u64(SUI_BUY_QUANTITY),
       tx.pure.bool(true), // isBid
-      tx.pure.bool(true), // payWithDeep
+      tx.pure.bool(payWithDeep),
       tx.object(CLOCK_OBJECT_ID),
     ],
   });
 
-  // 5. Sweep any filled SUI + leftover DBUSDC + DEEP back to us so the gas
-  //    coin is recovered.
-  for (const t of [
-    CONFIG.deepbook.suiType,
-    CONFIG.deepbook.usdcType,
-    CONFIG.deepbook.deepType,
-  ]) {
+  // 5. Sweep any filled SUI + leftover DBUSDC (+ DEEP if used) back to us.
+  const sweepTypes = [CONFIG.deepbook.suiType, CONFIG.deepbook.usdcType];
+  if (payWithDeep) sweepTypes.push(CONFIG.deepbook.deepType);
+  for (const t of sweepTypes) {
     const c = tx.moveCall({
       target: `${CONFIG.deepbook.packageId}::balance_manager::withdraw_all`,
       typeArguments: [t],
@@ -164,6 +167,8 @@ async function marketBuy(client: SuiClient, kp: Ed25519Keypair) {
     });
     tx.transferObjects([c], tx.pure.address(CONFIG.agent.address));
   }
+
+  console.log(`payWithDeep: ${payWithDeep}`);
 
   const res = await client.signAndExecuteTransaction({
     transaction: tx,

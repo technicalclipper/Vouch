@@ -101,7 +101,7 @@
 - **BalanceManager created on testnet**: `0xfec1aab79f151bbff6a225cb54c5299ce5821e59124f655119f7c14083abdad7` (tx `4dhH1NLTuqYTveQWjGonR5DGdFJck1XQatyjksSp6aho`). Recorded in config.
 
 **Blocked / not yet done:**
-- **Manual Deepbook market order** — script ready (`npm run deepbook -- trade`) but blocked on getting testnet DBUSDC and DEEP into the dev wallet. Neither token has a public mint (the `dusdc` module only transfers the treasury cap to the deployer; the DEEP testnet `init` minted to Mysten's deployer). Mysten gates testnet token distribution via the "DeepBook Predict Testnet token request form" (Google form / Discord) — needs human action.
+- **Manual Deepbook market order** — script ready (`npm run deepbook -- trade`). The Mysten testnet token form (https://tally.so/r/Xx102L) was submitted but currently only offers DBUSDC. **Workaround:** smoke script now defaults to `payWithDeep=false` (Deepbook v3 supports paying fees from the input coin); add `--with-deep` to force DEEP. So once DBUSDC arrives we can run the smoke trade without DEEP. DEEP only matters later if the executor's strategy specifically requires DEEP-denominated fees.
 - **Enoki API key** — required for Stage 3 zkLogin activation PTB. Not yet provisioned.
 - **Pyth SUI/USD feed sanity check** — feed ID + priceInfoObject recorded; haven't yet read the price on chain. Easy to do once Stage 4 lands.
 
@@ -141,7 +141,7 @@
 ## Blockers / unknowns
 
 - ~~**Sui CLI not installed**~~ — installed; package built and published to testnet. (See Done above.)
-- **Testnet DBUSDC + DEEP** — no public mint on either module. Mysten gates testnet token requests via a form/Discord channel. Blocks the manual Deepbook market order (CLAUDE.md §9 Stage 0) and Stage 2's first real trade.
+- **Testnet DBUSDC** — no public mint. Requested via https://tally.so/r/Xx102L (Mysten form). DEEP is NOT available via that form, but the smoke script + executor route around it with `payWithDeep=false` (fees paid from the input coin).
 - **Deepbook v3 testnet pool liquidity** — spec warns it's thin or empty; a maker-side liquidity seeder will likely be needed before any real-trade demo even once we hold tokens.
 - **Enoki API key** — needed for the Stage 3 zkLogin activation PTB.
 - **Pyth testnet feeds** — may be stale/flat; demo-mode override must exist.
