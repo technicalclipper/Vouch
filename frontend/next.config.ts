@@ -1,24 +1,8 @@
 import type { NextConfig } from "next";
-import path from "node:path";
 
-// We import `shared/config.ts` from the repo root (CLAUDE.md §8 single-source
-// rule). Next's bundler doesn't follow files outside the app dir by default,
-// so we expand its root + alias `@shared/*` explicitly.
-const nextConfig: NextConfig = {
-  turbopack: {
-    root: path.resolve(__dirname, ".."),
-    resolveAlias: {
-      "@shared": path.resolve(__dirname, "../shared"),
-    },
-  },
-  webpack: (config) => {
-    config.resolve = config.resolve ?? {};
-    config.resolve.alias = {
-      ...(config.resolve.alias ?? {}),
-      "@shared": path.resolve(__dirname, "../shared"),
-    };
-    return config;
-  },
-};
+// Vouch frontend uses its own local copy of the chain config at
+// `app/_lib/config.ts` (kept in sync by hand with `shared/config.ts`).
+// No cross-directory imports — Turbopack stays inside the project root.
+const nextConfig: NextConfig = {};
 
 export default nextConfig;

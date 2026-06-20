@@ -79,11 +79,27 @@ function Branch({
   ready: boolean;
   chainMode: boolean;
 }) {
-  if (!ready) return null;
+  if (!ready) return <Loading />;
   if (!cap) return <NotFound />;
   if (cap.status === "pending")
     return <ActivationView cap={cap} chainMode={chainMode} />;
   return <Dashboard cap={cap} chainMode={chainMode} />;
+}
+
+function Loading() {
+  return (
+    <div className="nb-border nb-shadow rounded-[var(--radius-lg)] bg-surface p-6 text-center">
+      <div className="mx-auto h-10 w-10 nb-border rounded-full bg-soft animate-[pulse_1.2s_ease-in-out_infinite]" />
+      <p className="mt-4 font-display text-xl font-extrabold">
+        Looking up your link…
+      </p>
+      <p className="mt-1 text-muted">Reading the chain. This takes a few seconds.</p>
+      <style>{`@keyframes pulse {
+        0%,100% { transform: scale(1); }
+        50%     { transform: scale(0.85); }
+      }`}</style>
+    </div>
+  );
 }
 
 function NotFound() {

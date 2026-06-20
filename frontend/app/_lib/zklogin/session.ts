@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 //
-// Self-hosted zkLogin flow (deviation from CLAUDE.md §2 — we use Mysten's
-// public prover, but no Enoki). Three entry points:
+// zkLogin flow backed by Enoki for prover + salt service.
+//
+// Why Enoki: Mysten's open prover-dev endpoint is gated to Sui devnet's
+// verifying key. Vouch runs on testnet, where devnet proofs Groth16-fail.
+// Enoki produces testnet-compatible proofs and hosts the per-user salt.
+//
+// Three entry points:
 //
 //   startSignIn(returnTo)       — generate ephemeral key + nonce, redirect
 //                                 the browser to Google's OAuth screen.
-//   completeSignIn(idToken)     — back from Google: derive salt + address,
-//                                 call Mysten prover, write a session,
-//                                 clear pending state.
+//   completeSignIn(idToken)     — back from Google: ask Enoki for salt +
+//                                 address, ask Enoki for the zk proof,
+//                                 write a session, clear pending state.
 //   currentSession()/signOut()  — straightforward read + clear.
-//
-// The salt is derived deterministically from the Google `sub` claim so the
-// user gets the same Sui address across sessions without us running a
-// salt service. This is a demo simplification; production should use a
-// hosted salt service so the salt is private to the user.
 
 "use client";
 
@@ -22,7 +22,6 @@ import {
   generateNonce,
   generateRandomness,
   getExtendedEphemeralPublicKey,
-  jwtToAddress,
 } from "@mysten/sui/zklogin";
 import { decodeSuiPrivateKey } from "@mysten/sui/cryptography";
 import { toBase64, fromBase64 } from "@mysten/sui/utils";
@@ -39,9 +38,9 @@ import {
   type ZkLoginSession,
 } from "./storage";
 
-// Mysten's public testnet prover. Production deploys should run their own
-// (mainnet uses prover.mystenlabs.com).
-const PROVER_URL = "https://prover-dev.mystenlabs.com/v1";
+// Enoki hosted zkLogin service. Same endpoint serves testnet + mainnet;
+// the network is selected per-request in the body.
+const ENOKI_BASE = "https://api.enoki.mystenlabs.com/v1";
 
 // Epoch buffer — how many epochs in the future maxEpoch should be set.
 // Sui testnet epochs are ~24h; a buffer of 2 gives the user up to ~48h
@@ -56,6 +55,39 @@ function googleClientId(): string {
     );
   }
   return id;
+}
+
+function enokiApiKey(): string {
+  const k = process.env.NEXT_PUBLIC_ENOKI_API_KEY;
+  if (!k) {
+    throw new Error(
+      "NEXT_PUBLIC_ENOKI_API_KEY missing — set it in frontend/.env.local",
+    );
+  }
+  return k;
+}
+
+async function enokiFetch<T>(
+  method: "GET" | "POST",
+  path: string,
+  jwt: string,
+  body?: unknown,
+): Promise<T> {
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${enokiApiKey()}`,
+    "zklogin-jwt": jwt,
+  };
+  if (method === "POST") headers["Content-Type"] = "application/json";
+  const res = await fetch(`${ENOKI_BASE}${path}`, {
+    method,
+    headers,
+    body: method === "POST" ? JSON.stringify(body ?? {}) : undefined,
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(`enoki ${path} ${res.status}: ${text}`);
+  }
+  return JSON.parse(text) as T;
 }
 
 function callbackUrl(): string {
@@ -125,21 +157,12 @@ function decodeJwtClaims(jwt: string): JwtClaims {
   return JSON.parse(decodeURIComponent(escape(json))) as JwtClaims;
 }
 
-// Demo salt: sha256(sub) truncated to 16 bytes, interpreted as a big int.
-// 16 bytes = 128 bits which fits comfortably under the field modulus the
-// circuit expects. Deterministic per Google account, so the user keeps the
-// same address across logins. NOT for production — should be a server-held
-// secret per user.
-async function deterministicSalt(sub: string): Promise<string> {
-  const bytes = new TextEncoder().encode(sub);
-  const hash = await crypto.subtle.digest(
-    "SHA-256",
-    bytes as unknown as ArrayBuffer,
-  );
-  const view = new Uint8Array(hash).slice(0, 16);
-  let n = 0n;
-  for (const b of view) n = (n << 8n) | BigInt(b);
-  return n.toString();
+interface EnokiZkLoginResponse {
+  data: { salt: string; address: string; publicKey: string };
+}
+
+interface EnokiZkpResponse {
+  data: unknown; // {proofPoints, issBase64Details, headerBase64}
 }
 
 export async function completeSignIn(jwt: string): Promise<ZkLoginSession> {
@@ -151,37 +174,40 @@ export async function completeSignIn(jwt: string): Promise<ZkLoginSession> {
   }
 
   const claims = decodeJwtClaims(jwt);
-  const salt = await deterministicSalt(claims.sub);
 
-  // Address from JWT + salt — pure derivation, no network call.
-  const address = jwtToAddress(jwt, salt, false);
+  // 1. Salt + address from Enoki. Enoki stores a per-user salt keyed by the
+  // JWT's (iss, sub) and returns it on every call, so the same Google
+  // account always derives the same Sui address. GET endpoint — JWT in
+  // the `zklogin-jwt` header is the only input.
+  const idRes = await enokiFetch<EnokiZkLoginResponse>(
+    "GET",
+    "/zklogin",
+    jwt,
+  );
+  const salt = idRes.data.salt;
+  const address = idRes.data.address;
 
-  // Rehydrate the ephemeral key so we can compute the extended pubkey for
-  // the prover and later sign txs.
+  // 2. Rehydrate the ephemeral key, get its sui-encoded public key for the
+  // prover request.
   const ephemeral = Ed25519Keypair.fromSecretKey(
     fromBase64(pending.ephemeralSecretKey),
   );
   const extendedPubkey = getExtendedEphemeralPublicKey(ephemeral.getPublicKey());
 
-  // Call Mysten's prover. Returns the ZkLoginInputs (a, b, c, header,
-  // address_seed) that get embedded in zkLogin signatures.
-  const proofRes = await fetch(PROVER_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      jwt,
-      extendedEphemeralPublicKey: extendedPubkey,
-      maxEpoch: pending.maxEpoch,
-      jwtRandomness: pending.randomness,
-      salt,
-      keyClaimName: "sub",
-    }),
-  });
-  if (!proofRes.ok) {
-    const body = await proofRes.text();
-    throw new Error(`prover ${proofRes.status}: ${body}`);
-  }
-  const zkProofs = (await proofRes.json()) as unknown;
+  // 3. Ask Enoki for the zk proof. Network must match the fullnode the
+  // executor / chain reads talk to (testnet).
+  const zkpRes = await enokiFetch<EnokiZkpResponse>(
+    "POST",
+    "/zklogin/zkp",
+    jwt,
+    {
+      network: "testnet",
+      ephemeralPublicKey: extendedPubkey,
+      maxEpoch: Number(pending.maxEpoch),
+      randomness: pending.randomness,
+    },
+  );
+  const zkProofs = zkpRes.data;
 
   const session: ZkLoginSession = {
     jwt,

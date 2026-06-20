@@ -63,9 +63,13 @@ export function ActivationView({
         toast("Activating…", "info");
         const { digest } = await activateCapability(session, cap.id, slug);
         toast(`Activated! ${digest.slice(0, 10)}…`);
-        // Force the page to re-poll the chain — the cap will now flip from
-        // pending → active and the dashboard will render in its place.
-        setTimeout(() => window.location.reload(), 600);
+        // After activate the chain clears `activation_token_hash`, so the
+        // token-lookup path no longer resolves. Jump to the stable cap-id
+        // URL; `[token]/page.tsx` will detect a 0x… id and render the
+        // dashboard.
+        setTimeout(() => {
+          window.location.href = `/c/${cap.id}`;
+        }, 600);
       } catch (err) {
         toast(`Activation failed: ${(err as Error).message}`, "info");
       }

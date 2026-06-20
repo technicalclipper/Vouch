@@ -59,7 +59,10 @@ export function useChainCapabilityByToken(
 
   useEffect(() => {
     let cancelled = false;
+    let inFlight = false;
     const tick = async () => {
+      if (inFlight) return;
+      inFlight = true;
       try {
         const c = await loadChainCapabilityByToken(token);
         if (!cancelled) {
@@ -70,6 +73,8 @@ export function useChainCapabilityByToken(
         // eslint-disable-next-line no-console
         console.error("[useChainCapabilityByToken]", err);
         if (!cancelled) setReady(true);
+      } finally {
+        inFlight = false;
       }
     };
     tick();

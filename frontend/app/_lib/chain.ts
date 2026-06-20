@@ -12,7 +12,7 @@
 import { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
 import { bcs } from "@mysten/sui/bcs";
 
-import { CONFIG } from "@shared/config";
+import { CONFIG } from "./config";
 import type {
   ActivityEvent,
   Capability,
@@ -96,41 +96,54 @@ export async function loadChainCapabilityByToken(
   const tokenBytes = new TextEncoder().encode(token);
   const tokenHash = await sha256(tokenBytes);
 
+  console.time("[token-lookup] total");
   const seen = new Set<string>();
   let cursor: EventCursor = null;
-  // Bound the walk so a misconfigured testnet doesn't hang the UI.
   for (let page = 0; page < 10; page++) {
+    console.time(`[token-lookup] page ${page} queryEvents`);
     const res = await suiClient.queryEvents({
       query: { MoveEventType: EVENT_CREATED },
       cursor: cursor ?? null,
       limit: 50,
       order: "descending",
     });
+    console.timeEnd(`[token-lookup] page ${page} queryEvents`);
+    console.log(`[token-lookup] page ${page} returned ${res.data.length} events`);
+
+    const candidates: string[] = [];
     for (const ev of res.data) {
       const capId = (ev.parsedJson as { cap_id?: string })?.cap_id;
       if (!capId || seen.has(capId)) continue;
       seen.add(capId);
-      const cap = await loadChainCapability(capId);
-      if (!cap) continue;
-      // The cap's chain state still carries the hash if pending. The mapper
-      // doesn't surface the hash on `Capability`, so we re-fetch raw fields
-      // for the comparison.
-      const raw = await suiClient.getObject({
-        id: capId,
-        options: { showContent: true },
-      });
-      const fields = (raw.data?.content as { fields?: ChainCapFields })?.fields;
+      candidates.push(capId);
+    }
+    console.time(`[token-lookup] page ${page} getObject x${candidates.length}`);
+    const rawObjs = await Promise.all(
+      candidates.map((id) =>
+        suiClient.getObject({ id, options: { showContent: true } }),
+      ),
+    );
+    console.timeEnd(`[token-lookup] page ${page} getObject x${candidates.length}`);
+    for (let i = 0; i < rawObjs.length; i++) {
+      const fields = (rawObjs[i].data?.content as { fields?: ChainCapFields })
+        ?.fields;
       if (!fields) continue;
       if (
         fields.activation_token_hash.length === tokenHash.length &&
-        fields.activation_token_hash.every((b, i) => b === tokenHash[i])
+        fields.activation_token_hash.every((b, j) => b === tokenHash[j])
       ) {
-        return cap;
+        console.log(`[token-lookup] MATCH cap ${candidates[i]}`);
+        console.time(`[token-lookup] loadChainEvents`);
+        const events = await loadChainEvents(candidates[i]);
+        console.timeEnd(`[token-lookup] loadChainEvents`);
+        console.timeEnd("[token-lookup] total");
+        return mapChainToCapability(fields, events);
       }
     }
     if (!res.hasNextPage || !res.nextCursor) break;
     cursor = res.nextCursor as EventCursor;
   }
+  console.timeEnd("[token-lookup] total");
   return undefined;
 }
 

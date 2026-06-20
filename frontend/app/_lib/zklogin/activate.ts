@@ -85,6 +85,20 @@ export async function activateCapability(
     session.aud,
   ).toString();
 
+  // eslint-disable-next-line no-console
+  console.log("[zklogin/activate] inputs", {
+    address: session.address,
+    sub: session.sub,
+    aud: session.aud,
+    iss: session.iss,
+    salt: session.salt,
+    addressSeed,
+    maxEpoch: session.maxEpoch,
+    proverFields: Object.keys(session.zkProofs as Record<string, unknown>),
+    proverProofs: session.zkProofs,
+    ephemeralPubKey: session.ephemeralPublicKey,
+  });
+
   const zkProofs = session.zkProofs as Record<string, unknown>;
   const zkLoginSig = getZkLoginSignature({
     inputs: {
@@ -94,6 +108,9 @@ export async function activateCapability(
     maxEpoch: session.maxEpoch,
     userSignature: ephemeralSig,
   });
+
+  // eslint-disable-next-line no-console
+  console.log("[zklogin/activate] zkLogin sig (first 80 chars):", zkLoginSig.slice(0, 80));
 
   // 4. Send everything back; executor submits and returns the digest.
   const result = await postJson<SubmitResponse>(
