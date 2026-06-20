@@ -1,0 +1,21 @@
+{
+  "name": "vouch-executor",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Vouch executor — off-chain agent that polls due capabilities, evaluates risk, and submits execution PTBs to Sui testnet. CLAUDE.md §5.",
+  "scripts": {
+    "dev": "tsx --env-file=.env src/index.ts",
+    "start": "tsx --env-file=.env src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@mysten/sui": "^1.30.0",
+    "fastify": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

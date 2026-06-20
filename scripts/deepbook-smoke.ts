@@ -100,12 +100,11 @@ async function marketBuy(client: SuiClient, kp: Ed25519Keypair) {
   // no public faucet). Pass `--with-deep` to force DEEP fees instead.
   const payWithDeep = process.argv.includes("--with-deep");
 
-  // Tiny amounts so we don't fight thin testnet liquidity.
-  // quantity is in BASE units (SUI) — we're buying SUI with DBUSDC.
-  // 0.01 SUI = 10_000_000 MIST. Cap DBUSDC deposit at 1 DBUSDC = 1_000_000
-  // micro-DBUSDC (6 dp). DEEP for fees only if payWithDeep is true.
-  const SUI_BUY_QUANTITY = 10_000_000n; // 0.01 SUI worth of base, in SUI scalar
-  const DBUSDC_DEPOSIT = 1_000_000n; // 1 DBUSDC
+  // Pool params (read live from chain): lot_size=0.1 SUI, min_size=1 SUI.
+  // quantity is in BASE units (SUI, 9 dp) — we're buying SUI with DBUSDC.
+  const SUI_BUY_QUANTITY = 1_000_000_000n; // 1 SUI = min_size
+  // Spot ~ a few DBUSDC per SUI; deposit 50 DBUSDC as headroom for fees+slippage.
+  const DBUSDC_DEPOSIT = 50_000_000n; // 50 DBUSDC (6 dp)
   const DEEP_DEPOSIT = 1_000_000n; // 1 DEEP — only deposited if payWithDeep
 
   const tx = new Transaction();

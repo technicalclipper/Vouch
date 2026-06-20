@@ -12,6 +12,7 @@ npm-debug.log*
 .DS_Store
 .claude/
 .env
-.env.local
+.env.*
+!.env.example
 .vscode/
 .idea/

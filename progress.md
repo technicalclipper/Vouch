@@ -10,6 +10,7 @@
 - **Platform = desktop-only for both flows** (per the updated DESIGN.md §2, §5, §9). Recipient = centered ~520px column on a desktop page; creator = wider desktop layout. The recipient page wrapper has been updated from `max-w-[480px]` to `max-w-[520px]` and the vertical padding bumped for desktop framing.
 - **Frontend stack:** Next.js 16 + React 19 + Tailwind v4 (existing scaffold). Tokens defined as CSS variables per DESIGN.md §3; components handwritten per §4.
 - **Move package directory created at `contracts/`** (deviation from CLAUDE.md §13 which suggests `/contracts` — same thing, just relative to repo root).
+- **zkLogin: self-hosted, not Enoki** (deviation from CLAUDE.md §2 which says "Enoki (Mysten's hosted service). Do not self-host salt management."). We talk to Google directly via the OAuth implicit / id_token flow (`NEXT_PUBLIC_GOOGLE_CLIENT_ID` in `frontend/.env.local`, no client secret), generate the ephemeral key + nonce client-side, call Mysten's zkLogin prover for the ZK proof, and derive the Sui address ourselves. Sponsored gas for activation will need a separate path (likely a backend-signed sponsor tx) since we don't get Enoki's sponsorship for free. Salt handling: TBD (either local-deterministic from `sub` for demo simplicity, or a tiny salt service).
 
 ---
 
@@ -36,6 +37,45 @@
 - `npm run build` — clean; six routes resolved (`/`, `/c/[token]`, `/create`, `/create/share/[id]`, `/dashboard`, `/dashboard/[id]`).
 - Pre-existing `npm-debug.log` from the prior broken-npm session deleted.
 
+### Stage 0 — Kill the unknowns ✅
+- Deepbook v3 testnet IDs + types confirmed against `@mysten/deepbook-v3` SDK v1.5.1 constants. Recorded in `shared/config.ts`.
+- BalanceManager created and shared: `0xfec1aab79f151bbff6a225cb54c5299ce5821e59124f655119f7c14083abdad7` (tx `4dhH1NLTuqYTveQWjGonR5DGdFJck1XQatyjksSp6aho`).
+- **DBUSDC arrived** (1000 DBUSDC at the agent address `0xeff48ffbc87d1fbbd6d12f25297502f1758981df2f886109f171dc605533ac21`). The Tally form had initially returned the wrong mock (`0xe95040…::dusdc::DUSDC`, a Deepbook-Predict token); DBUSDC matching the v3 pool type (`0xf7152c05…::DBUSDC::DBUSDC`) was delivered later.
+- **Real Deepbook v3 market BUY on SUI_DBUSDC executed end-to-end**: tx `FL3ZZxDYN4T83gzzC1LUCbdJR4Kb2obcrTfgXwn7T5L1`. 1 SUI acquired at 0.71225 DBUSDC/SUI; matched a real maker (`0x64fcc8…`); `OrderFullyFilled`. Fees in input coin (`payWithDeep=false`) — DEEP never needed for fees. This kills the last critical unknown.
+- Pool params read live and pinned in `scripts/deepbook-smoke.ts`: SUI_DBUSDC `lot_size=0.1 SUI`, `min_size=1 SUI`, `tick_size=10` quote units. The lifecycle/executor must respect these → per-execution min for the demo DCA is 1 SUI worth.
+- Pyth feed sanity-check + Enoki API key remain open (Stage 4 / Stage 3 respectively).
+
+### Stage 2 — Executor backend ✅ (real Deepbook trade gated by Move capability assertions)
+
+**Scaffold (`executor/`):**
+- `package.json`, `tsconfig.json` (NodeNext, `allowImportingTsExtensions`, includes `../shared/**/*.ts`), `.env.example`, `.gitignore` (`.env` excluded).
+- `src/keypair.ts` — loads `Ed25519Keypair` from `AGENT_PRIVATE_KEY` env (bech32 `suiprivkey1…` or hex `0x…`) via `decodeSuiPrivateKey`, falling back to `~/.sui/sui_config/sui.keystore`.
+- `src/cap.ts` — `CapState` interface mirroring `AgentCapability` fields; `loadCap(client, capId)` reads shared object content; `isDue(cap, now)` enforces the same predicates as `assert_executable` (active, not revoked, agent matches, now ≥ next_execution_at, executions_done < executions_max, now < expires_at); `findDueCaps(client, agentAddress)` paginates `CapabilityCreated` events (max 20 pages × 50).
+- `src/risk.ts` — Stage 4 stub; always returns `{ action: "execute" }` for now.
+- `src/execute.ts` — the execution PTB (CLAUDE.md §5 "the heart of the system"):
+  1. `vouch::capability::draw_for_execution<DBUSDC>` (asserts + reserves + vault withdraw, atomic)
+  2. `deepbook::balance_manager::deposit<DBUSDC>` into shared BalanceManager
+  3. `generate_proof_as_owner` (TradeProof hot-potato)
+  4. `deepbook::pool::place_market_order<SUI, DBUSDC>` with `quantity=1_000_000_000n` (1 SUI = pool min_size), `is_bid=true`, `pay_with_deep=false`, `client_order_id=Date.now()`
+  5. `balance_manager::withdraw_all<SUI>` → `transfer::public_transfer` to `cap.owner`
+  6. `balance_manager::withdraw_all<DBUSDC>` (dust) → `cap.owner`
+  7. `vouch::capability::log_action` (emits `ActionExecuted`, advances schedule, increments counter)
+- `src/skip.ts` — submits `capability::log_skip` (bcs vector of reason bytes).
+- `src/server.ts` — Fastify (`GET /health`, `POST /run-now/:capId?force=execute|skip`). 409 if not due, otherwise risk-eval then submit.
+- `src/index.ts` — boots server on `PORT` (default 8787) + poll loop (`POLL_INTERVAL_MS`, sequential per due cap). `DISABLE_POLL=true` for demo-driven mode.
+
+**Seeder (`scripts/dca-seed.ts`):**
+- Creates Vault<DBUSDC> funded with 3 DBUSDC + capability (per_exec_cap=1 DBUSDC, executions_max=3, interval=5s, expires=24h, `pool_scope=[SUI_DBUSDC]`).
+- Auto-activates with the same dev key so we can test the executor without going through the recipient flow. Documented in the script comments as a test-only convenience.
+- Wired as `npm run dca-seed`.
+
+**End-to-end verification on testnet:**
+- Seed: cap `0xd61dcc6d2fdbb047f7e7dba17dec374d4f7f092f30ce21a0f936f9046e9da1d0`, vault `0x572e81d5f3e56a4d125cee69858ede9b503902be81d5cfe7fb8c371ebab5f536`. Create tx `7mY3vvekKyeuzWAjtgfdHgFFkmacoWn7Q2FGJps7oZhy`, activate tx `a6Vv9DztmzNCqD8x3b7xYgVEaXj2qwhimTHCCjdXcHB`.
+- Executor `GET /health` → `{ ok: true, agent: 0xeff48ff…ac21 }`.
+- `POST /run-now/0xd61dcc6d…` → **success**: tx `BV6bMewvogYKX7q2ndhc5zC3sXZZK2LLkRAFtMmFxeb4` returned `{ action: "execute", amountIn: "1000000", amountOut: "1000000000" }` (1 DBUSDC in → 1 SUI out, fee paid from input).
+- Post-execution cap state (read on-chain): `executions_done: 1`, `budget_remaining: 2_000_000`, `next_execution_at` advanced by `interval_ms=5000`. Vault, BalanceManager, pool, and cap all mutated atomically in the same tx.
+- This proves CLAUDE.md §5: the executor places a real Deepbook v3 testnet trade end-to-end, every step gated by Move assertions, all atomic, output transferred to the recipient.
+
 ### Stage 1 — Move package compiled, published, and verified on testnet ✅
 
 - Sui CLI installed; testnet env active; dev address funded via faucet.
@@ -57,6 +97,18 @@
 ---
 
 ## In progress
+
+### Stage 3 — Recipient frontend wired to chain (CLAUDE.md §7.1, but self-hosted zkLogin per project-wide deviation)
+
+**Goal:** replace `mockStore` reads with real on-chain state, replace the placeholder "Sign in with Google" with our self-hosted zkLogin flow (Google id_token → Mysten prover → zkLogin signature), and make activation + revocation submit real PTBs.
+
+**Next concrete step:**
+1. Wire self-hosted zkLogin in the frontend: ephemeral `Ed25519Keypair`, nonce derived from epoch + randomness + ephemeral pubkey, redirect to Google OAuth with `response_type=id_token nonce=…`, parse the id_token from the URL fragment on return, call Mysten's testnet prover (`https://prover.mystenlabs.com/v1` or the Mysten-hosted public prover) for the ZK proof, derive Sui address from `iss + sub + aud + salt`.
+2. Salt decision: for the demo, use a deterministic salt (e.g. `sha256(sub)` truncated) so the recipient gets the same address across sessions without a salt server. Document this is a demo-only shortcut; production needs a salt service.
+3. Replace `useCapabilityByToken` / `useCapabilityById` with hooks that read the `AgentCapability` shared object + `ActionExecuted` / `ExecutionSkipped` events directly via `SuiClient`.
+4. Activation page (R1/R2): trigger zkLogin → build PTB calling `capability::activate(cap, token, clock)` → sign with zkLogin signature → submit. Sponsored gas TBD (likely a small backend endpoint that wraps the user's tx in a sponsored gas object signed by a sponsor key, since we don't have Enoki for free sponsorship).
+5. Dashboard (R3): poll `ActionExecuted` / `ExecutionSkipped` events, render with the executor's tx digests (e.g. `BV6bMew…`).
+6. Revoke (R4 confirm): real PTB calling `capability::revoke<DBUSDC>(cap, vault, clock)` signed by the zkLogin owner.
 
 ### Stage 1 — Move spine (CLAUDE.md §4)
 
@@ -86,36 +138,7 @@
 
 ## Not yet started
 
-### Stage 0 — Kill the unknowns (CLAUDE.md §9) — **partially done**
-
-**Done:**
-- All Deepbook v3 testnet + Pyth testnet addresses confirmed against the @mysten/deepbook-v3 SDK v1.5.1 constants file (the canonical source Mysten ships) and recorded in `shared/config.ts`:
-  - Deepbook package: `0x22be4cade64bf2d02412c7e8d0e8beea2f78828b948118d46735315409371a3c`
-  - Registry: `0x7c256edbda983a2cd6f946655f4bf3f00a41043993781f8674a7046e8c0e11d1`
-  - DEEP treasury: `0x69fffdae0075f8f71f4fa793549c11079266910e8905169845af1f5d00e09dcb`
-  - **Testnet "USDC" = DBUSDC** (Mysten ships a test stablecoin, not real USDC): type `0xf7152c05930480cd740d7311b5b8b45c6f488e3a53a11c3f74a6fac36a52e0d7::DBUSDC::DBUSDC`, scalar 1e6
-  - Testnet DEEP: `0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8::deep::DEEP`, scalar 1e6
-  - **Pool** SUI_DBUSDC (base=SUI, quote=DBUSDC): `0x1c19362ca52b8ffd7a33cee805a67d40f31e6ba303753fd3a4cfdfacea7163a5`
-  - Pyth testnet state: `0x243759059f4c3111179da5878c12f68d612c21a8d54d85edc86164bb18be1c7c`; SUI/USD feed `0x50c67b3fd225db8912a424dd4baed60ffdde625ed2feaaf283724f9608fea266`; priceInfoObject `0x1ebb295c789cc42b3b2a1606482cd1c7124076a0f5676718501fda8c7fd075a0`
-- `scripts/deepbook-smoke.ts` written with two modes (`init`, `trade`). PTB shapes taken verbatim from `@mysten/deepbook-v3` SDK so ABI matches the deployed package.
-- **BalanceManager created on testnet**: `0xfec1aab79f151bbff6a225cb54c5299ce5821e59124f655119f7c14083abdad7` (tx `4dhH1NLTuqYTveQWjGonR5DGdFJck1XQatyjksSp6aho`). Recorded in config.
-
-**Blocked / not yet done:**
-- **Manual Deepbook market order** — script ready (`npm run deepbook -- trade`). The Mysten testnet token form (https://tally.so/r/Xx102L) was submitted but currently only offers DBUSDC. **Workaround:** smoke script now defaults to `payWithDeep=false` (Deepbook v3 supports paying fees from the input coin); add `--with-deep` to force DEEP. So once DBUSDC arrives we can run the smoke trade without DEEP. DEEP only matters later if the executor's strategy specifically requires DEEP-denominated fees.
-- **Enoki API key** — required for Stage 3 zkLogin activation PTB. Not yet provisioned.
-- **Pyth SUI/USD feed sanity check** — feed ID + priceInfoObject recorded; haven't yet read the price on chain. Easy to do once Stage 4 lands.
-
-### Stage 2 — Executor backend (CLAUDE.md §5)
-- Node/TS service holding the agent keypair.
-- Poll loop for due capabilities.
-- Execution PTB builder for `dca_buy`.
-- `POST /run-now/:capId` demo endpoint.
-- Place one real testnet Deepbook v3 trade end-to-end.
-
-### Stage 3 — Recipient frontend wired to chain (CLAUDE.md §7.1)
-- Enoki zkLogin activation PTB (Enoki-sponsored).
-- Dashboard reading `ActionExecuted` / `ExecutionSkipped` events from chain.
-- Revoke PTB.
+_(Stages 0, 1, 2 moved to **Done** above. Open Stage 0 follow-ups: Enoki key for Stage 3; Pyth on-chain read for Stage 4; possible maker-side seeder if pool depth thins out before demo day.)_
 
 ### Stage 4 — Risk layer (CLAUDE.md §6)
 - Pyth SUI/USD price-drop rule.
@@ -143,7 +166,7 @@
 - ~~**Sui CLI not installed**~~ — installed; package built and published to testnet. (See Done above.)
 - **Testnet DBUSDC** — no public mint. Requested via https://tally.so/r/Xx102L (Mysten form). DEEP is NOT available via that form, but the smoke script + executor route around it with `payWithDeep=false` (fees paid from the input coin).
 - **Deepbook v3 testnet pool liquidity** — spec warns it's thin or empty; a maker-side liquidity seeder will likely be needed before any real-trade demo even once we hold tokens.
-- **Enoki API key** — needed for the Stage 3 zkLogin activation PTB.
+- ~~**Enoki API key**~~ — not using Enoki. Self-hosted zkLogin instead (see project-wide decisions). Open: salt strategy (deterministic-from-`sub` for demo vs. salt service for prod) and sponsored gas path (need our own sponsor backend or have the recipient pay activation gas from a tiny pre-funded amount).
 - **Pyth testnet feeds** — may be stale/flat; demo-mode override must exist.
 - **Exact testnet USDC coin type** — must match the chosen Deepbook pool exactly.
 
