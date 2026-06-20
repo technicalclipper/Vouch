@@ -115,8 +115,14 @@
 - `./node_modules/.bin/tsc --noEmit` clean. `next build` clean — 8 routes including `/dev/chain`.
 
 **Next concrete step:**
-1. Smoke `/dev/chain` against the running testnet to confirm the live read fetches our seeded cap end-to-end (RPC reachable from browser, `executions_done: 1` shows, etc.).
-2. Swap the real recipient pages to the chain hooks: `/c/[token]` activation landing (token-hash match) and `/c/[token]` dashboard (cap_id from URL or activation flow).
+1. ✅ `/dev/chain` smoke against testnet — confirmed: live read of seeded cap `0xd61dcc6d…` shows `executions_done: 1`, `budget_remaining: 2`, three events (created/activated/bought) including the Stage 2 trade.
+2. ✅ Recipient page `/c/[token]` now dispatches on param shape:
+   - `0x…` (66-char) → chain-id read via `useChainCapabilityById`
+   - `demo` / `pending` → mock store (unchanged, used by existing dev landing)
+   - Anything else → chain-token lookup via `useChainCapabilityByToken` (will be the real share-link path once activation is wired)
+   - `Dashboard` accepts `chainMode` — "Run now" POSTs to the executor (`/run-now/:capId` with optional `?force=skip`), surfaces the returned tx digest in the toast. "Stop" in chain mode shows "needs Google sign-in (coming next)" because revoke requires a zkLogin signature.
+   - Executor got `@fastify/cors` (`origin: true`) so the browser can call it cross-origin. Smoke-verified: preflight returns `Access-Control-Allow-Origin: http://localhost:3000`.
+   - `frontend/app/_lib/executor.ts` wraps the HTTP API. `NEXT_PUBLIC_EXECUTOR_URL` env override (defaults to `http://localhost:8787`).
 3. Wire self-hosted zkLogin: ephemeral `Ed25519Keypair`, nonce derived from epoch + randomness + ephemeral pubkey, redirect to Google OAuth with `response_type=id_token nonce=…`, parse the id_token from the URL fragment on return, call Mysten's testnet prover for the ZK proof, derive Sui address from `iss + sub + aud + salt`.
 4. Salt decision: for the demo, use a deterministic salt (e.g. `sha256(sub)` truncated) so the recipient gets the same address across sessions without a salt server. Document as demo-only.
 5. Activation PTB: `capability::activate(cap, token, clock)` signed with zkLogin signature. Sponsored gas TBD — likely a tiny backend that wraps the user's tx in a sponsored gas object signed by a sponsor key.

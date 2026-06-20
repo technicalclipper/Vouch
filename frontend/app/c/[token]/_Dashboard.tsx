@@ -11,13 +11,65 @@ import { ActivityItem } from "../../_components/ActivityItem";
 import { Modal } from "../../_components/Modal";
 import { formatSui, formatUsd } from "../../_lib/format";
 import { revoke, runNow } from "../../_lib/mockStore";
+import { runNowOnChain } from "../../_lib/executor";
 import { toast } from "../../_components/Toast";
 
 // R3 + R4 in DESIGN.md §5.
-export function Dashboard({ cap }: { cap: Capability }) {
+// `chainMode=true` swaps mock actions for real executor + chain-state reads.
+export function Dashboard({
+  cap,
+  chainMode = false,
+}: {
+  cap: Capability;
+  chainMode?: boolean;
+}) {
   const [confirmStop, setConfirmStop] = useState(false);
+  const [busy, setBusy] = useState(false);
   const isStopped = cap.status === "stopped";
   const isDone = cap.status === "done";
+
+  async function handleRunNow(force?: "execute" | "skip") {
+    if (busy) return;
+    setBusy(true);
+    try {
+      if (chainMode) {
+        const r = await runNowOnChain(cap.id, force ? { force } : {});
+        if (r.action === "execute") {
+          toast(`Agent placed a buy. (${r.digest.slice(0, 10)}…)`);
+        } else {
+          toast(`Agent paused: ${r.reason}`, "info");
+        }
+      } else {
+        runNow(cap.id, { forceSkip: force === "skip" });
+        toast(
+          force === "skip"
+            ? "Agent paused this week."
+            : "Agent placed a buy.",
+          force === "skip" ? "info" : "success",
+        );
+      }
+    } catch (err) {
+      toast(`Run failed: ${(err as Error).message}`, "info");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function handleStop() {
+    if (chainMode) {
+      // Real revoke requires the recipient's zkLogin signature — wiring lands
+      // alongside the activation flow. Surface that honestly for now.
+      toast(
+        "Stopping needs Google sign-in (coming next).",
+        "info",
+      );
+      setConfirmStop(false);
+      return;
+    }
+    revoke(cap.id);
+    setConfirmStop(false);
+    toast("Stopped. Any unused money is on its way back.");
+  }
 
   const usedUsd = cap.budget_total - cap.budget_remaining;
   const events = [...cap.events].sort((a, b) => b.timestamp - a.timestamp);
@@ -71,20 +123,16 @@ export function Dashboard({ cap }: { cap: Capability }) {
             <Button
               size="md"
               variant="primary"
-              onClick={() => {
-                runNow(cap.id);
-                toast("Agent placed a buy.");
-              }}
+              disabled={busy}
+              onClick={() => handleRunNow()}
             >
-              Run now
+              {busy ? "Running…" : "Run now"}
             </Button>
             <Button
               size="md"
               variant="ghost"
-              onClick={() => {
-                runNow(cap.id, { forceSkip: true });
-                toast("Agent paused this week.", "info");
-              }}
+              disabled={busy}
+              onClick={() => handleRunNow("skip")}
             >
               Run with simulated price drop
             </Button>
@@ -135,15 +183,7 @@ export function Dashboard({ cap }: { cap: Capability }) {
           >
             Keep it going
           </Button>
-          <Button
-            variant="danger"
-            fullWidth
-            onClick={() => {
-              revoke(cap.id);
-              setConfirmStop(false);
-              toast("Stopped. Any unused money is on its way back.");
-            }}
-          >
+          <Button variant="danger" fullWidth onClick={handleStop}>
             Yes, stop
           </Button>
         </div>

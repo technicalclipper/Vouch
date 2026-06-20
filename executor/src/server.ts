@@ -8,6 +8,7 @@
 // Also exposes /health for the frontends.
 
 import Fastify from "fastify";
+import cors from "@fastify/cors";
 import type { SuiClient } from "@mysten/sui/client";
 import type { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
 
@@ -23,6 +24,11 @@ export interface ServerDeps {
 
 export function buildServer({ client, kp }: ServerDeps) {
   const app = Fastify({ logger: { level: "info" } });
+
+  // Permissive CORS so the recipient/creator frontends (different origin in
+  // dev, different domain in prod) can hit /health + /run-now from the
+  // browser. Demo-grade — tighten before any real deployment.
+  app.register(cors, { origin: true });
 
   app.get("/health", async () => ({
     ok: true,
