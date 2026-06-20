@@ -123,10 +123,18 @@
    - `Dashboard` accepts `chainMode` — "Run now" POSTs to the executor (`/run-now/:capId` with optional `?force=skip`), surfaces the returned tx digest in the toast. "Stop" in chain mode shows "needs Google sign-in (coming next)" because revoke requires a zkLogin signature.
    - Executor got `@fastify/cors` (`origin: true`) so the browser can call it cross-origin. Smoke-verified: preflight returns `Access-Control-Allow-Origin: http://localhost:3000`.
    - `frontend/app/_lib/executor.ts` wraps the HTTP API. `NEXT_PUBLIC_EXECUTOR_URL` env override (defaults to `http://localhost:8787`).
-3. Wire self-hosted zkLogin: ephemeral `Ed25519Keypair`, nonce derived from epoch + randomness + ephemeral pubkey, redirect to Google OAuth with `response_type=id_token nonce=…`, parse the id_token from the URL fragment on return, call Mysten's testnet prover for the ZK proof, derive Sui address from `iss + sub + aud + salt`.
-4. Salt decision: for the demo, use a deterministic salt (e.g. `sha256(sub)` truncated) so the recipient gets the same address across sessions without a salt server. Document as demo-only.
-5. Activation PTB: `capability::activate(cap, token, clock)` signed with zkLogin signature. Sponsored gas TBD — likely a tiny backend that wraps the user's tx in a sponsored gas object signed by a sponsor key.
-6. Revoke PTB: `capability::revoke<DBUSDC>(cap, vault, clock)` signed by zkLogin owner.
+3. ✅ **zkLogin Phase A — foundation wired** (not yet end-to-end tested):
+   - `frontend/app/_lib/zklogin/storage.ts` — `PendingZkLoginState` + `ZkLoginSession` types; localStorage at `vouch.zklogin.pending` / `vouch.zklogin.session`; broadcasts `vouch:zklogin` CustomEvent on writes so the hook re-renders.
+   - `frontend/app/_lib/zklogin/session.ts` — `startSignIn(returnTo)`: ephemeral `Ed25519Keypair`, `getLatestSuiSystemState()` → `maxEpoch = epoch + 2`, `generateRandomness()`, `generateNonce()`, persist pending, redirect to `https://accounts.google.com/o/oauth2/v2/auth?...response_type=id_token&nonce=…&scope=openid+email+profile&prompt=select_account`. `completeSignIn(jwt)`: decode JWT claims, derive `deterministicSalt = sha256(sub).slice(0,16)` as bigint string, call `jwtToAddress(jwt, salt, false)`, compute `getExtendedEphemeralPublicKey`, POST to `https://prover-dev.mystenlabs.com/v1` with `{jwt, extendedEphemeralPublicKey, maxEpoch, jwtRandomness, salt, keyClaimName:"sub"}`, persist session. `currentSession()`, `signOut()`, `takePendingReturnTo()`.
+   - `frontend/app/_lib/zklogin/useZkLogin.ts` — React hook subscribed to `vouch:zklogin` + `storage` events.
+   - `frontend/app/auth/callback/page.tsx` — parses `#id_token=…` from the URL fragment, runs `completeSignIn()`, navigates back to the `returnTo` from pending state.
+   - `_ActivationView.tsx` now accepts `chainMode`. Sign-in button calls `startSignIn(window.location.pathname + window.location.search)` in chain mode and falls back to the mock latency for `/c/demo`. R2 shows the signed-in user's picture/name + truncated zkLogin address.
+   - `scripts/dca-seed.ts` got a `--no-activate` flag so we can seed a pending chain cap, fixing the token-encoding bug (URL slug is `randomBytes(16).toString("hex")`; both hashing at create-time and BCS-encoding at activate-time now use `TextEncoder().encode(token)` so on-chain `sha256(bytes) == stored_hash`).
+   - Salt = `sha256(sub) truncated to 16 bytes` (CLAUDE.md-flagged as demo-only).
+   - Typecheck + `next build` both clean.
+4. **Phase B (next)** — Activation PTB: `capability::activate(cap, token, clock)` signed via `getZkLoginSignature` + `genAddressSeed`. Needs sponsored-gas path (cap.owner has no SUI).
+5. **Phase C** — tiny sponsor backend signing gas objects for zkLogin txs (recipient pays nothing).
+6. **Phase D** — Revoke PTB: `capability::revoke<DBUSDC>(cap, vault, clock)` from the Dashboard "Stop" button.
 
 ### Stage 1 — Move spine (CLAUDE.md §4)
 

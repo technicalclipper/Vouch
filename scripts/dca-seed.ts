@@ -5,13 +5,16 @@
 // trade against to prove Stage 2 end-to-end.
 //
 // In production the create PTB is wallet-signed by the funder and the
-// activate PTB is Enoki-sponsored after zkLogin. Here we collapse them
-// because we're testing the executor, not the onboarding flow.
+// activate PTB is recipient-signed (zkLogin) after Google sign-in. Here
+// we collapse them because we're testing the executor, not the onboarding
+// flow. Pass `--no-activate` to leave the cap pending so the Stage 3
+// activation UI can exercise the real zkLogin flow end-to-end.
 //
 // Usage:
-//   cd scripts && npm run dca-seed
-// Prints the new cap_id and vault_id. Pass cap_id to:
-//   curl -X POST http://localhost:8787/run-now/<cap_id>
+//   cd scripts && npm run dca-seed              # auto-activates
+//   cd scripts && npm run dca-seed -- --no-activate  # leaves it pending
+// Prints the new cap_id, vault_id, and (in --no-activate mode) the raw
+// share token + /c/<token> URL the recipient should visit.
 
 import { createHash, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -53,8 +56,16 @@ async function main() {
   const INTERVAL_MS = 5_000n; // 5s between slots for quick demos
   const DURATION_MS = 24n * 60n * 60n * 1000n; // 1 day
 
-  const token = randomBytes(16);
-  const tokenHash = new Uint8Array(createHash("sha256").update(token).digest());
+  // 32-char hex string used as the URL slug (`/c/<token>`). We hash the
+  // utf8 bytes of this string so the activation tx can be reconstructed
+  // from whatever the recipient pastes / clicks. The Move contract just
+  // compares sha256(activation_token) == stored_hash — it doesn't care
+  // what the bytes mean.
+  const token = randomBytes(16).toString("hex");
+  const tokenBytes = new TextEncoder().encode(token);
+  const tokenHash = new Uint8Array(
+    createHash("sha256").update(tokenBytes).digest(),
+  );
 
   console.log(`signer:        ${me}`);
   console.log(`budget_total:  ${BUDGET_TOTAL} (micro-DBUSDC)`);
@@ -125,33 +136,45 @@ async function main() {
   const vault = created.find((c) => c.objectType.includes("::vault::Vault<"));
   if (!cap || !vault) throw new Error("created cap/vault not found");
 
-  // ---- 2. Activate (same signer plays the recipient here) ----
-  const tx2 = new Transaction();
-  tx2.moveCall({
-    target: `${CONFIG.vouchPackageId}::capability::activate`,
-    arguments: [
-      tx2.object(cap.objectId),
-      tx2.pure(bcs.vector(bcs.U8).serialize(Array.from(token)).toBytes()),
-      tx2.object(CLOCK),
-    ],
-  });
-  const activateRes = await client.signAndExecuteTransaction({
-    transaction: tx2,
-    signer: kp,
-    options: { showEffects: true, showEvents: true },
-  });
-  await client.waitForTransaction({ digest: activateRes.digest });
-  if (activateRes.effects?.status?.status !== "success") {
-    console.error(activateRes.effects?.status);
-    throw new Error("seed activate failed");
+  const skipActivate = process.argv.includes("--no-activate");
+
+  if (!skipActivate) {
+    // ---- 2. Activate (same signer plays the recipient here) ----
+    const tx2 = new Transaction();
+    tx2.moveCall({
+      target: `${CONFIG.vouchPackageId}::capability::activate`,
+      arguments: [
+        tx2.object(cap.objectId),
+        tx2.pure(
+          bcs.vector(bcs.U8).serialize(Array.from(tokenBytes)).toBytes(),
+        ),
+        tx2.object(CLOCK),
+      ],
+    });
+    const activateRes = await client.signAndExecuteTransaction({
+      transaction: tx2,
+      signer: kp,
+      options: { showEffects: true, showEvents: true },
+    });
+    await client.waitForTransaction({ digest: activateRes.digest });
+    if (activateRes.effects?.status?.status !== "success") {
+      console.error(activateRes.effects?.status);
+      throw new Error("seed activate failed");
+    }
+    console.log(`activate tx: ${activateRes.digest}`);
   }
-  console.log(`activate tx: ${activateRes.digest}`);
 
   console.log(`\n--- ready ---`);
   console.log(`cap_id:   ${cap.objectId}`);
   console.log(`vault_id: ${vault.objectId}`);
-  console.log(`\nTrigger from the running executor:`);
-  console.log(`  curl -X POST http://localhost:8787/run-now/${cap.objectId}`);
+  if (skipActivate) {
+    console.log(`token:    ${token}`);
+    console.log(`\nRecipient visits:`);
+    console.log(`  http://localhost:3000/c/${token}`);
+  } else {
+    console.log(`\nTrigger from the running executor:`);
+    console.log(`  curl -X POST http://localhost:8787/run-now/${cap.objectId}`);
+  }
 }
 
 main().catch((e) => {

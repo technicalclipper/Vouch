@@ -81,7 +81,8 @@ function Branch({
 }) {
   if (!ready) return null;
   if (!cap) return <NotFound />;
-  if (cap.status === "pending") return <ActivationView cap={cap} />;
+  if (cap.status === "pending")
+    return <ActivationView cap={cap} chainMode={chainMode} />;
   return <Dashboard cap={cap} chainMode={chainMode} />;
 }
 
