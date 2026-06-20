@@ -16,6 +16,12 @@ function executorUrl(): string {
   );
 }
 
+// Exposed for other modules (e.g. zklogin sponsor calls) that need to hit
+// the executor on their own routes.
+export function executorBaseUrl(): string {
+  return executorUrl();
+}
+
 export type RunNowResult =
   | {
       action: "execute";

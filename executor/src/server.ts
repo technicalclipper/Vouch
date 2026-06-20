@@ -16,6 +16,7 @@ import { loadCap, isDue } from "./cap.ts";
 import { executeOne } from "./execute.ts";
 import { submitSkip } from "./skip.ts";
 import { evaluate } from "./risk.ts";
+import { prepareActivate, submitActivate } from "./sponsor.ts";
 
 export interface ServerDeps {
   client: SuiClient;
@@ -84,6 +85,45 @@ export function buildServer({ client, kp }: ServerDeps) {
       };
     },
   );
+
+  // ---- Sponsored zkLogin activation -------------------------------------
+  // Recipient zkLogin address pays no gas. We build the PTB and pre-sign as
+  // sponsor; the client signs the same bytes with the zkLogin sig and posts
+  // back to /submit. See sponsor.ts for the full flow.
+
+  app.post<{
+    Body: { capId: string; token: string; userAddress: string };
+  }>("/sponsor/activate/prepare", async (req, reply) => {
+    const { capId, token, userAddress } = req.body ?? {};
+    if (!capId || !token || !userAddress) {
+      return reply.code(400).send({
+        error: "capId, token, userAddress required",
+      });
+    }
+    try {
+      const r = await prepareActivate(client, kp, capId, token, userAddress);
+      return r;
+    } catch (err) {
+      return reply.code(500).send({ error: (err as Error).message });
+    }
+  });
+
+  app.post<{
+    Body: { txBytes: string; userSig: string; sponsorSig: string };
+  }>("/sponsor/activate/submit", async (req, reply) => {
+    const { txBytes, userSig, sponsorSig } = req.body ?? {};
+    if (!txBytes || !userSig || !sponsorSig) {
+      return reply
+        .code(400)
+        .send({ error: "txBytes, userSig, sponsorSig required" });
+    }
+    try {
+      const r = await submitActivate(client, { txBytes, userSig, sponsorSig });
+      return r;
+    } catch (err) {
+      return reply.code(500).send({ error: (err as Error).message });
+    }
+  });
 
   return app;
 }

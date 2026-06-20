@@ -132,9 +132,16 @@
    - `scripts/dca-seed.ts` got a `--no-activate` flag so we can seed a pending chain cap, fixing the token-encoding bug (URL slug is `randomBytes(16).toString("hex")`; both hashing at create-time and BCS-encoding at activate-time now use `TextEncoder().encode(token)` so on-chain `sha256(bytes) == stored_hash`).
    - Salt = `sha256(sub) truncated to 16 bytes` (CLAUDE.md-flagged as demo-only).
    - Typecheck + `next build` both clean.
-4. **Phase B (next)** — Activation PTB: `capability::activate(cap, token, clock)` signed via `getZkLoginSignature` + `genAddressSeed`. Needs sponsored-gas path (cap.owner has no SUI).
-5. **Phase C** — tiny sponsor backend signing gas objects for zkLogin txs (recipient pays nothing).
-6. **Phase D** — Revoke PTB: `capability::revoke<DBUSDC>(cap, vault, clock)` from the Dashboard "Stop" button.
+4. ✅ **zkLogin Phase B + C — activation PTB with sponsored gas** (built, awaiting real-user smoke test):
+   - `executor/src/sponsor.ts` — `prepareActivate(client, sponsor, capId, tokenString, userAddress)`: picks a sponsor SUI coin via `getCoins`, builds a `vouch::capability::activate(cap, token, clock)` PTB with `setSender(user)`, `setGasOwner(sponsor)`, `setGasPayment([coinRef])`, `setGasBudget(50M)`, calls `tx.build({client})`, sponsor signs → returns `{txBytes (b64), sponsorSig, sponsorAddress}`. `submitActivate(client, {txBytes, userSig, sponsorSig})`: `executeTransactionBlock` with both signatures, waits for tx, returns digest.
+   - `executor/src/server.ts` — new routes: `POST /sponsor/activate/prepare` and `POST /sponsor/activate/submit` (demo-grade input validation only).
+   - `frontend/app/_lib/zklogin/activate.ts` — `activateCapability(session, capId, tokenString)`: POSTs to `/prepare`, rehydrates ephemeral keypair via `Ed25519Keypair.fromSecretKey(fromBase64(secret))`, signs txBytes → `ephemeralSig`, computes `addressSeed = genAddressSeed(BigInt(salt), "sub", sub, aud)`, wraps via `getZkLoginSignature({ inputs: {...zkProofs, addressSeed}, maxEpoch, userSignature: ephemeralSig })`, POSTs to `/submit` with the bundle, returns digest.
+   - `frontend/app/_lib/executor.ts` — exported `executorBaseUrl()` so other modules can target arbitrary routes.
+   - `_ActivationView.tsx` "Turn it on" now calls `activateCapability` in chain mode (reads slug from `window.location.pathname`), toasts the digest, reloads so the page repolls and flips from R2 (pending) → R3 (dashboard).
+   - Gas comes from the agent address (`0xeff48ffb…`), reusing the same keypair that runs executions. Production would use a dedicated sponsor key + a managed pool of fresh gas coins.
+   - Typecheck clean (frontend + executor). `next build` clean.
+5. **Phase D** — Revoke PTB: `capability::revoke<DBUSDC>(cap, vault, clock)` from Dashboard "Stop" button (same sponsor pattern).
+6. **Smoke test plan:** `cd scripts && npm run dca-seed -- --no-activate` → open printed `http://localhost:3000/c/<token>` → Sign in with Google → R2 → "Turn it on" → expect on-chain `CapabilityActivated` event + dashboard flip.
 
 ### Stage 1 — Move spine (CLAUDE.md §4)
 

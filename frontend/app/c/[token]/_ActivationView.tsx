@@ -9,6 +9,7 @@ import { activate } from "../../_lib/mockStore";
 import { toast } from "../../_components/Toast";
 import { useZkLogin } from "../../_lib/zklogin/useZkLogin";
 import { startSignIn } from "../../_lib/zklogin/session";
+import { activateCapability } from "../../_lib/zklogin/activate";
 
 // R1 → R2 in DESIGN.md §5.
 // `chainMode=true` swaps the mock activate() / fake latency for the real
@@ -49,15 +50,25 @@ export function ActivationView({
     setStep("R2");
   }
 
-  function turnOn() {
+  async function turnOn() {
     if (chainMode) {
-      // Real activation PTB is the next chunk — it needs the session to
-      // sign `capability::activate(cap, token, clock)`. For now surface
-      // that honestly.
-      toast(
-        "Wallet ready. Activation PTB lands in the next chunk.",
-        "info",
-      );
+      if (!session) {
+        toast("Sign in first.", "info");
+        return;
+      }
+      // URL slug is the activation token (utf8 bytes match what was hashed
+      // into `activation_token_hash` at create time).
+      const slug = window.location.pathname.replace(/^\/c\//, "");
+      try {
+        toast("Activating…", "info");
+        const { digest } = await activateCapability(session, cap.id, slug);
+        toast(`Activated! ${digest.slice(0, 10)}…`);
+        // Force the page to re-poll the chain — the cap will now flip from
+        // pending → active and the dashboard will render in its place.
+        setTimeout(() => window.location.reload(), 600);
+      } catch (err) {
+        toast(`Activation failed: ${(err as Error).message}`, "info");
+      }
       return;
     }
     const fakeOwner =
