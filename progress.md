@@ -102,13 +102,25 @@
 
 **Goal:** replace `mockStore` reads with real on-chain state, replace the placeholder "Sign in with Google" with our self-hosted zkLogin flow (Google id_token → Mysten prover → zkLogin signature), and make activation + revocation submit real PTBs.
 
+**Done so far:**
+- Installed `@mysten/sui` v2 in `frontend/`. The SDK's v2 API renamed `SuiClient` → `SuiJsonRpcClient` (under `@mysten/sui/jsonRpc`); same `queryEvents` / `getObject` shape.
+- `frontend/app/_lib/chain.ts` — `SuiJsonRpcClient` wired to `CONFIG.rpcUrl`, plus three reads:
+  - `loadChainCapability(capId)` — `getObject` on the `AgentCapability` shared object, mapped to the existing `Capability` UI type. Decimals divided through (`usdcScalar=1e6`, `suiScalar=1e9`).
+  - `loadChainCapabilityByToken(token)` — walks `CapabilityCreated` events newest→oldest, sha256s the raw token and compares to each cap's `activation_token_hash`. Only matches pending caps (hash is cleared on activate, by design).
+  - `loadChainEvents(capId)` — pulls all five capability event types and filters by `cap_id`. Returns sorted `ActivityEvent[]` that drops straight into the existing dashboard list.
+- `frontend/app/_lib/useChainCapability.ts` — poll hooks (`useChainCapabilityById`, `useChainCapabilityByToken`, default 5s) that mirror the existing `useCapability*` shape. No subscribe — chain pushes nothing; we poll.
+- `frontend/app/dev/chain/page.tsx` — bare debug page that loads our seeded cap (`0xd61dcc6d…`) live and dumps the projected JSON, so we can eyeball chain reads without touching the real recipient pages.
+- Config plumbing: added `@shared/*` path alias in `tsconfig.json`, expanded turbopack root + webpack alias in `next.config.ts` to allow `import { CONFIG } from "@shared/config"`. CLAUDE.md §8 single-source rule still holds; the frontend imports from `shared/` directly, never duplicates.
+- Bumped tsconfig `target` ES2017 → ES2020 (needed for BigInt literals + modern `crypto.subtle` typings).
+- `./node_modules/.bin/tsc --noEmit` clean. `next build` clean — 8 routes including `/dev/chain`.
+
 **Next concrete step:**
-1. Wire self-hosted zkLogin in the frontend: ephemeral `Ed25519Keypair`, nonce derived from epoch + randomness + ephemeral pubkey, redirect to Google OAuth with `response_type=id_token nonce=…`, parse the id_token from the URL fragment on return, call Mysten's testnet prover (`https://prover.mystenlabs.com/v1` or the Mysten-hosted public prover) for the ZK proof, derive Sui address from `iss + sub + aud + salt`.
-2. Salt decision: for the demo, use a deterministic salt (e.g. `sha256(sub)` truncated) so the recipient gets the same address across sessions without a salt server. Document this is a demo-only shortcut; production needs a salt service.
-3. Replace `useCapabilityByToken` / `useCapabilityById` with hooks that read the `AgentCapability` shared object + `ActionExecuted` / `ExecutionSkipped` events directly via `SuiClient`.
-4. Activation page (R1/R2): trigger zkLogin → build PTB calling `capability::activate(cap, token, clock)` → sign with zkLogin signature → submit. Sponsored gas TBD (likely a small backend endpoint that wraps the user's tx in a sponsored gas object signed by a sponsor key, since we don't have Enoki for free sponsorship).
-5. Dashboard (R3): poll `ActionExecuted` / `ExecutionSkipped` events, render with the executor's tx digests (e.g. `BV6bMew…`).
-6. Revoke (R4 confirm): real PTB calling `capability::revoke<DBUSDC>(cap, vault, clock)` signed by the zkLogin owner.
+1. Smoke `/dev/chain` against the running testnet to confirm the live read fetches our seeded cap end-to-end (RPC reachable from browser, `executions_done: 1` shows, etc.).
+2. Swap the real recipient pages to the chain hooks: `/c/[token]` activation landing (token-hash match) and `/c/[token]` dashboard (cap_id from URL or activation flow).
+3. Wire self-hosted zkLogin: ephemeral `Ed25519Keypair`, nonce derived from epoch + randomness + ephemeral pubkey, redirect to Google OAuth with `response_type=id_token nonce=…`, parse the id_token from the URL fragment on return, call Mysten's testnet prover for the ZK proof, derive Sui address from `iss + sub + aud + salt`.
+4. Salt decision: for the demo, use a deterministic salt (e.g. `sha256(sub)` truncated) so the recipient gets the same address across sessions without a salt server. Document as demo-only.
+5. Activation PTB: `capability::activate(cap, token, clock)` signed with zkLogin signature. Sponsored gas TBD — likely a tiny backend that wraps the user's tx in a sponsored gas object signed by a sponsor key.
+6. Revoke PTB: `capability::revoke<DBUSDC>(cap, vault, clock)` signed by zkLogin owner.
 
 ### Stage 1 — Move spine (CLAUDE.md §4)
 
