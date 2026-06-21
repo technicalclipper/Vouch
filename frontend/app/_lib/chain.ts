@@ -172,7 +172,8 @@ export async function loadChainEvents(capId: string): Promise<ActivityEvent[]> {
         const json = ev.parsedJson as Record<string, unknown>;
         if (json.cap_id !== capId) continue;
         const ts = Number(ev.timestampMs ?? 0);
-        out.push(eventFromChain(t, json, ts, capId));
+        const digest = ev.id?.txDigest;
+        out.push(eventFromChain(t, json, ts, capId, digest));
       }
       if (!res.hasNextPage || !res.nextCursor) break;
       cursor = res.nextCursor as EventCursor;
@@ -189,11 +190,13 @@ function eventFromChain(
   json: Record<string, unknown>,
   ts: number,
   capId: string,
+  digest?: string,
 ): ActivityEvent {
   const base = {
     id: `${type}_${ts}_${Math.random().toString(36).slice(2, 7)}`,
     cap_id: capId,
     timestamp: ts,
+    digest,
   };
   if (type === EVENT_CREATED) return { ...base, kind: "created" };
   if (type === EVENT_ACTIVATED) return { ...base, kind: "activated" };
@@ -269,6 +272,7 @@ function mapChainToCapability(
   return {
     id: f.id.id,
     token: "", // resolved separately when navigating by token
+    vault_id: f.vault_id,
     funder_name: shortAddr(f.funder),
     funder_address: f.funder,
     owner_address: f.active ? f.owner : undefined,

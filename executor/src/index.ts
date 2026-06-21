@@ -28,7 +28,7 @@ async function processOne(
   cap: CapState,
 ) {
   try {
-    const decision = await evaluate(cap);
+    const decision = await evaluate(client, cap);
     if (decision.action === "skip") {
       const r = await submitSkip(client, kp, cap, decision.reason);
       console.log(

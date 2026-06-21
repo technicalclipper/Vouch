@@ -16,7 +16,12 @@ import { loadCap, isDue } from "./cap.ts";
 import { executeOne } from "./execute.ts";
 import { submitSkip } from "./skip.ts";
 import { evaluate } from "./risk.ts";
-import { prepareActivate, submitActivate } from "./sponsor.ts";
+import {
+  prepareActivate,
+  prepareRevoke,
+  submitActivate,
+  submitRevoke,
+} from "./sponsor.ts";
 
 export interface ServerDeps {
   client: SuiClient;
@@ -64,16 +69,46 @@ export function buildServer({ client, kp }: ServerDeps) {
       }
 
       if (forceSkip) {
-        const reason =
-          "Demo override: skipping this slot to show the risk-skip path.";
-        const r = await submitSkip(client, kp, cap, reason);
-        return { action: "skip", reason, digest: r.digest };
+        // Demo path: flip the price-drop override on for THIS call only so
+        // evaluate() trips the price_drop rule and produces a real LLM-written
+        // reason. Restore the previous env value afterwards.
+        const prev = process.env.DEMO_FORCE_PRICE_DROP;
+        process.env.DEMO_FORCE_PRICE_DROP = "true";
+        let decision;
+        try {
+          decision = await evaluate(client, cap);
+        } finally {
+          if (prev === undefined) delete process.env.DEMO_FORCE_PRICE_DROP;
+          else process.env.DEMO_FORCE_PRICE_DROP = prev;
+        }
+        if (decision.action !== "skip") {
+          // Override didn't trip (shouldn't happen) — fall back to a string.
+          decision = {
+            action: "skip" as const,
+            reason: "Demo override: deferring this slot to show the risk path.",
+            market: decision.market,
+          };
+        }
+        const r = await submitSkip(client, kp, cap, decision.reason);
+        return {
+          action: "skip",
+          reason: decision.reason,
+          digest: r.digest,
+          market: decision.market,
+        };
       }
 
-      const decision = forceExecute ? { action: "execute" as const } : await evaluate(cap);
+      const decision = forceExecute
+        ? ({ action: "execute" as const, market: undefined } as const)
+        : await evaluate(client, cap);
       if (decision.action === "skip") {
         const r = await submitSkip(client, kp, cap, decision.reason);
-        return { action: "skip", reason: decision.reason, digest: r.digest };
+        return {
+          action: "skip",
+          reason: decision.reason,
+          digest: r.digest,
+          market: decision.market,
+        };
       }
 
       const r = await executeOne(client, kp, cap);
@@ -119,6 +154,44 @@ export function buildServer({ client, kp }: ServerDeps) {
     }
     try {
       const r = await submitActivate(client, { txBytes, userSig, sponsorSig });
+      return r;
+    } catch (err) {
+      return reply.code(500).send({ error: (err as Error).message });
+    }
+  });
+
+  // ---- Sponsored zkLogin revoke -----------------------------------------
+  // Recipient (cap owner) revokes from the dashboard. Same dual-sig pattern
+  // as activate. Funder-side revoke goes through the wallet adapter directly.
+
+  app.post<{
+    Body: { capId: string; vaultId: string; userAddress: string };
+  }>("/sponsor/revoke/prepare", async (req, reply) => {
+    const { capId, vaultId, userAddress } = req.body ?? {};
+    if (!capId || !vaultId || !userAddress) {
+      return reply.code(400).send({
+        error: "capId, vaultId, userAddress required",
+      });
+    }
+    try {
+      const r = await prepareRevoke(client, kp, capId, vaultId, userAddress);
+      return r;
+    } catch (err) {
+      return reply.code(500).send({ error: (err as Error).message });
+    }
+  });
+
+  app.post<{
+    Body: { txBytes: string; userSig: string; sponsorSig: string };
+  }>("/sponsor/revoke/submit", async (req, reply) => {
+    const { txBytes, userSig, sponsorSig } = req.body ?? {};
+    if (!txBytes || !userSig || !sponsorSig) {
+      return reply
+        .code(400)
+        .send({ error: "txBytes, userSig, sponsorSig required" });
+    }
+    try {
+      const r = await submitRevoke(client, { txBytes, userSig, sponsorSig });
       return r;
     } catch (err) {
       return reply.code(500).send({ error: (err as Error).message });

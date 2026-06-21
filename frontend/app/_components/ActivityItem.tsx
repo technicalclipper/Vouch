@@ -1,3 +1,6 @@
+"use client";
+
+import { Fragment, useState } from "react";
 import type { ActivityEvent } from "../_lib/types";
 import { formatRelative, formatSui, formatUsd } from "../_lib/format";
 
@@ -65,6 +68,57 @@ function describe(event: ActivityEvent, funderName: string): string {
   }
 }
 
+function hasDetails(event: ActivityEvent): boolean {
+  if (event.kind === "bought") return event.amount_in != null;
+  if (event.kind === "skipped") return !!event.reason;
+  return !!event.digest;
+}
+
+function Details({ event }: { event: ActivityEvent }) {
+  const rows: Array<{ label: string; value: React.ReactNode }> = [];
+
+  if (event.kind === "bought") {
+    if (event.amount_in != null) {
+      rows.push({ label: "Spent", value: `${formatUsd(event.amount_in)} USDC` });
+    }
+    if (event.amount_out != null) {
+      rows.push({ label: "Received", value: formatSui(event.amount_out) });
+    }
+    if (event.price_usd != null) {
+      rows.push({
+        label: "Price",
+        value: `${formatUsd(event.price_usd)} / SUI`,
+      });
+    }
+  }
+  if (event.kind === "skipped" && event.reason) {
+    rows.push({ label: "Why", value: event.reason });
+  }
+  rows.push({
+    label: "When",
+    value: new Date(event.timestamp).toLocaleString(),
+  });
+  if (event.digest) {
+    rows.push({
+      label: "Tx",
+      value: (
+        <span className="font-mono text-[13px] break-all">{event.digest}</span>
+      ),
+    });
+  }
+
+  return (
+    <dl className="mt-3 grid grid-cols-[minmax(80px,auto)_1fr] gap-x-3 gap-y-1.5 border-t-2 border-ink/15 pt-3 text-sm">
+      {rows.map((r, i) => (
+        <Fragment key={i}>
+          <dt className="text-muted">{r.label}</dt>
+          <dd className="text-ink">{r.value}</dd>
+        </Fragment>
+      ))}
+    </dl>
+  );
+}
+
 export function ActivityItem({
   event,
   funderName,
@@ -72,17 +126,53 @@ export function ActivityItem({
   event: ActivityEvent;
   funderName: string;
 }) {
+  const [open, setOpen] = useState(false);
+  const expandable = hasDetails(event);
+
   return (
-    <li className="nb-border nb-shadow rounded-[var(--radius)] bg-surface p-4 flex items-start gap-3">
-      <Icon kind={event.kind} />
-      <div className="min-w-0 flex-1">
-        <p className="text-base sm:text-[17px] font-medium leading-snug text-ink">
-          {describe(event, funderName)}
-        </p>
-        <p className="mt-0.5 text-sm text-muted">
-          {formatRelative(event.timestamp)}
-        </p>
-      </div>
+    <li className="nb-border nb-shadow rounded-[var(--radius)] bg-surface">
+      <button
+        type="button"
+        onClick={() => expandable && setOpen((v) => !v)}
+        aria-expanded={open}
+        disabled={!expandable}
+        className={`w-full text-left p-4 flex items-start gap-3 ${
+          expandable ? "cursor-pointer" : "cursor-default"
+        }`}
+      >
+        <Icon kind={event.kind} />
+        <div className="min-w-0 flex-1">
+          <p className="text-base sm:text-[17px] font-medium leading-snug text-ink">
+            {describe(event, funderName)}
+          </p>
+          <p className="mt-0.5 text-sm text-muted">
+            {formatRelative(event.timestamp)}
+          </p>
+        </div>
+        {expandable ? (
+          <span
+            aria-hidden
+            className={`mt-1 shrink-0 text-ink transition-transform ${
+              open ? "rotate-90" : ""
+            }`}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+              <path
+                d="M9 6l6 6-6 6"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </span>
+        ) : null}
+      </button>
+      {expandable && open ? (
+        <div className="px-4 pb-4">
+          <Details event={event} />
+        </div>
+      ) : null}
     </li>
   );
 }

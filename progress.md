@@ -140,8 +140,24 @@
    - `_ActivationView.tsx` "Turn it on" now calls `activateCapability` in chain mode (reads slug from `window.location.pathname`), toasts the digest, reloads so the page repolls and flips from R2 (pending) → R3 (dashboard).
    - Gas comes from the agent address (`0xeff48ffb…`), reusing the same keypair that runs executions. Production would use a dedicated sponsor key + a managed pool of fresh gas coins.
    - Typecheck clean (frontend + executor). `next build` clean.
-5. **Phase D** — Revoke PTB: `capability::revoke<DBUSDC>(cap, vault, clock)` from Dashboard "Stop" button (same sponsor pattern).
+5. ✅ **Phase D — Recipient revoke (sponsored zkLogin)**:
+   - `executor/src/sponsor.ts` — `prepareRevoke(client, sponsor, capId, vaultId, userAddress)` builds `capability::revoke<DBUSDC>(cap, vault, clock)` with `typeArguments: [usdcType]`, gas budget 80M; `submitRevoke` mirrors `submitActivate`.
+   - `executor/src/server.ts` — `POST /sponsor/revoke/prepare` + `/submit` routes.
+   - `frontend/app/_lib/zklogin/revoke.ts` — `revokeCapability(session, capId, vaultId)`: prepare → ephemeral-sign txBytes → wrap in zkLogin signature via `getZkLoginSignature` → submit. Returns digest.
+   - `frontend/app/c/[token]/_Dashboard.tsx` — chainMode "Stop" calls `revokeCapability(session, cap.id, cap.vault_id)`; modal shows "Stopping…" during the call; page reloads after success so chain state repolls.
+   - `frontend/app/_lib/types.ts` + `chain.ts` carry `vault_id` through from `ChainCapFields` so the revoke PTB has it available.
+   - Verified live on testnet by the user.
 6. **Smoke test plan:** `cd scripts && npm run dca-seed -- --no-activate` → open printed `http://localhost:3000/c/<token>` → Sign in with Google → R2 → "Turn it on" → expect on-chain `CapabilityActivated` event + dashboard flip.
+
+### Stage 4 — Risk layer ✅ (CLAUDE.md §6)
+
+- **`executor/src/pyth.ts`** — Pyth Hermes price fetcher (`fetchPriceNow`, `fetchPriceAtPast(windowMs, now)`, `pctChange`). Decodes `parsed[].price.{price,expo,publish_time}`. `DEMO_FORCE_PRICE_DROP=true` synthesizes `prior = now * 1.1` so the price_drop rule trips reliably during demos. Optional `DEMO_SYNTHETIC_PRICE_USD` override.
+- **`executor/src/depth.ts`** — Deepbook v3 orderbook depth estimator. Single `devInspectTransactionBlock` runs `pool::mid_price<SUI,DBUSDC>` + `pool::get_level2_ticks_from_mid<SUI,DBUSDC>(50, clock)` (note: `get_level2_range` aborts with MoveAbort code 3 on every range we tried — unusable). BCS-decodes mid + ladders, walks asks for VWAP up to `targetSuiBase=1 SUI`, returns `{midPrice, vwapAsk, slippageBpsAsk, filledQty, enoughDepth}`. Price formula calibrated against live Pyth: `human = raw / usdcScalar`.
+- **`executor/src/llm.ts`** — `generateSkipReason(ctx)` calls OpenAI `gpt-4o-mini` for a single ≤22-word sentence explaining the skip. System prompt forces plain English, no JSON. Templated fallback when `OPENAI_API_KEY` missing.
+- **`executor/src/risk.ts`** — `evaluate(client, cap)` runs both rules independently (defaults: price_drop ≤ -5% over 1h; slippage_cap > 100 bps; trade size 1 SUI). Returns `{action: "execute" | "skip", reason?, market: MarketSnapshot}`. Either rule can trip; LLM is only called on a trip.
+- **`executor/src/server.ts`** — `POST /run-now/:capId?force=skip` now flips `DEMO_FORCE_PRICE_DROP=true` for the call, runs real `evaluate()`, restores the env. `force=execute` still bypasses risk eval.
+- **Frontend polish:** `ActivityItem.tsx` is expandable (chevron). Bought rows expand to Spent/Received/Price/When/Tx digest; Skipped rows expand to the full LLM reason; `chain.ts` now carries `ev.id.txDigest` into the event via the new `digest?` field on `ActivityEvent`.
+- **Verified live on testnet:** seeded fresh cap, normal `Run now` → execute with `midPrice≈0.708`, slippage 42 bps; `Run with simulated price drop` → skip with LLM-written reason ("SUI dropped 9.1% in the last 1h, exceeding the 5% threshold; deferring this slot.") logged on chain via `ExecutionSkipped`.
 
 ### Stage 1 — Move spine (CLAUDE.md §4)
 
@@ -172,12 +188,6 @@
 ## Not yet started
 
 _(Stages 0, 1, 2 moved to **Done** above. Open Stage 0 follow-ups: Enoki key for Stage 3; Pyth on-chain read for Stage 4; possible maker-side seeder if pool depth thins out before demo day.)_
-
-### Stage 4 — Risk layer (CLAUDE.md §6)
-- Pyth SUI/USD price-drop rule.
-- Deepbook depth-based slippage-cap rule.
-- LLM-generated skip reasons (real model call, schema-validated).
-- Demo-mode price override flag.
 
 ### Stage 5 — Creator frontend wired to chain (CLAUDE.md §7.2)
 - Wallet adapter connect (Suiet / Sui Wallet).

@@ -37,6 +37,7 @@ export interface ActivityEvent {
   cap_id: string;
   timestamp: number; // ms epoch
   kind: "bought" | "skipped" | "activated" | "created" | "stopped";
+  digest?: string; // tx digest, for explorer linking + expanded view
   // bought
   amount_in?: number; // USDC
   amount_out?: number; // SUI
@@ -48,6 +49,7 @@ export interface ActivityEvent {
 export interface Capability {
   id: string;
   token: string; // activation token used in the share link `/c/:token`
+  vault_id?: string; // linked Vault object id — required for revoke PTB
   funder_name: string; // "Alex" — for recipient-facing copy
   funder_address: string;
   owner_address?: string; // recipient zkLogin address, set on activation

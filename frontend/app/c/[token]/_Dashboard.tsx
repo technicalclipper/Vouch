@@ -13,6 +13,8 @@ import { formatSui, formatUsd } from "../../_lib/format";
 import { revoke, runNow } from "../../_lib/mockStore";
 import { runNowOnChain } from "../../_lib/executor";
 import { toast } from "../../_components/Toast";
+import { useZkLogin } from "../../_lib/zklogin/useZkLogin";
+import { revokeCapability } from "../../_lib/zklogin/revoke";
 
 // R3 + R4 in DESIGN.md §5.
 // `chainMode=true` swaps mock actions for real executor + chain-state reads.
@@ -25,6 +27,8 @@ export function Dashboard({
 }) {
   const [confirmStop, setConfirmStop] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [stopping, setStopping] = useState(false);
+  const { session } = useZkLogin();
   const isStopped = cap.status === "stopped";
   const isDone = cap.status === "done";
 
@@ -55,15 +59,33 @@ export function Dashboard({
     }
   }
 
-  function handleStop() {
+  async function handleStop() {
     if (chainMode) {
-      // Real revoke requires the recipient's zkLogin signature — wiring lands
-      // alongside the activation flow. Surface that honestly for now.
-      toast(
-        "Stopping needs Google sign-in (coming next).",
-        "info",
-      );
-      setConfirmStop(false);
+      if (!session) {
+        toast("Sign in with Google first to stop this.", "info");
+        return;
+      }
+      if (!cap.vault_id) {
+        toast("Missing vault id — can't revoke. Reload the page.", "info");
+        return;
+      }
+      setStopping(true);
+      try {
+        toast("Stopping…", "info");
+        const { digest } = await revokeCapability(
+          session,
+          cap.id,
+          cap.vault_id,
+        );
+        toast(`Stopped. ${digest.slice(0, 10)}…`);
+        setConfirmStop(false);
+        // Refund + status change is on chain; reload to pull fresh state.
+        setTimeout(() => window.location.reload(), 800);
+      } catch (err) {
+        toast(`Stop failed: ${(err as Error).message}`, "info");
+      } finally {
+        setStopping(false);
+      }
       return;
     }
     revoke(cap.id);
@@ -183,8 +205,13 @@ export function Dashboard({
           >
             Keep it going
           </Button>
-          <Button variant="danger" fullWidth onClick={handleStop}>
-            Yes, stop
+          <Button
+            variant="danger"
+            fullWidth
+            disabled={stopping}
+            onClick={handleStop}
+          >
+            {stopping ? "Stopping…" : "Yes, stop"}
           </Button>
         </div>
       </Modal>
