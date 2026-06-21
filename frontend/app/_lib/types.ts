@@ -32,6 +32,18 @@ export interface DCAIntent {
   expires_in_days: number;
 }
 
+export interface SkipMeta {
+  rule: "price_drop" | "slippage_cap";
+  market: {
+    suiUsdNow?: number;
+    suiUsdPrior?: number;
+    pctChange?: number;
+    midPrice?: number;
+    estimatedSlippageBps?: number;
+  };
+  threshold: { pct?: number; bps?: number; windowMs?: number };
+}
+
 export interface ActivityEvent {
   id: string;
   cap_id: string;
@@ -44,6 +56,7 @@ export interface ActivityEvent {
   price_usd?: number;
   // skipped
   reason?: string;
+  skip_meta?: SkipMeta;
 }
 
 export interface Capability {

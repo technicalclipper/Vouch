@@ -19,6 +19,7 @@ import type {
   CapabilityStatus,
   DCAIntent,
   RiskRule,
+  SkipMeta,
 } from "./types";
 
 export const suiClient = new SuiJsonRpcClient({
@@ -147,6 +148,90 @@ export async function loadChainCapabilityByToken(
   return undefined;
 }
 
+// Creator dashboard read: every capability whose `funder == address`. Walks
+// `CapabilityCreated` events newest→oldest (bounded), loads each shared
+// object, and projects via the same mapper used by the recipient flow.
+// Returns newest-created first so the list reads top-down by recency.
+export async function loadChainCapabilitiesByFunder(
+  funder: string,
+): Promise<Capability[]> {
+  const normalized = funder.toLowerCase();
+  const seen = new Set<string>();
+  const matchedIds: string[] = [];
+  let cursor: EventCursor = null;
+  for (let page = 0; page < 10; page++) {
+    const res = await suiClient.queryEvents({
+      query: { MoveEventType: EVENT_CREATED },
+      cursor: cursor ?? null,
+      limit: 50,
+      order: "descending",
+    });
+    for (const ev of res.data) {
+      const json = ev.parsedJson as { cap_id?: string; funder?: string };
+      if (!json.cap_id || seen.has(json.cap_id)) continue;
+      seen.add(json.cap_id);
+      if ((json.funder ?? "").toLowerCase() === normalized) {
+        matchedIds.push(json.cap_id);
+      }
+    }
+    if (!res.hasNextPage || !res.nextCursor) break;
+    cursor = res.nextCursor as EventCursor;
+  }
+
+  // Load object + events for each match, in parallel. Drop any that fail to
+  // load (e.g. shared object got deleted) rather than failing the whole list.
+  const settled = await Promise.all(
+    matchedIds.map(async (id) => {
+      try {
+        return await loadChainCapability(id);
+      } catch {
+        return undefined;
+      }
+    }),
+  );
+  return settled.filter((c): c is Capability => !!c);
+}
+
+// Pick the most recent PENDING and most recent ACTIVE capability on chain.
+// Used by the dev landing page to point its "First-time activation" and
+// "Already-active dashboard" buttons at real on-chain caps instead of the
+// mock-store seeds. Walks CapabilityCreated events newest→oldest, loads
+// each candidate object, and stops as soon as both slots are filled (or
+// we exhaust the bounded page budget).
+export async function pickSampleChainCaps(): Promise<{
+  pending?: Capability;
+  active?: Capability;
+}> {
+  const out: { pending?: Capability; active?: Capability } = {};
+  const seen = new Set<string>();
+  let cursor: EventCursor = null;
+  for (let page = 0; page < 6; page++) {
+    const res = await suiClient.queryEvents({
+      query: { MoveEventType: EVENT_CREATED },
+      cursor: cursor ?? null,
+      limit: 50,
+      order: "descending",
+    });
+    for (const ev of res.data) {
+      const capId = (ev.parsedJson as { cap_id?: string })?.cap_id;
+      if (!capId || seen.has(capId)) continue;
+      seen.add(capId);
+      try {
+        const cap = await loadChainCapability(capId);
+        if (!cap) continue;
+        if (!out.pending && cap.status === "pending") out.pending = cap;
+        if (!out.active && cap.status === "active") out.active = cap;
+        if (out.pending && out.active) return out;
+      } catch {
+        // skip caps we can't load
+      }
+    }
+    if (!res.hasNextPage || !res.nextCursor) break;
+    cursor = res.nextCursor as EventCursor;
+  }
+  return out;
+}
+
 // Read every capability-scoped event ordered oldest→newest. We don't have
 // a per-cap event filter in Move (events are package-scoped), so we ask
 // the RPC for each type and filter by cap_id client-side. Bounded pagination.
@@ -219,8 +304,35 @@ function eventFromChain(
   }
   if (type === EVENT_SKIPPED) {
     const reasonBytes = (json.reason as number[]) ?? [];
-    const reason = new TextDecoder().decode(new Uint8Array(reasonBytes));
-    return { ...base, kind: "skipped", reason };
+    const raw = new TextDecoder().decode(new Uint8Array(reasonBytes));
+    // Structured envelope (see executor SkipPayload): try JSON first; fall
+    // back to plain text so older skips + manual log_skip calls still render.
+    if (raw.startsWith("{")) {
+      try {
+        const p = JSON.parse(raw) as {
+          v?: number;
+          rule?: "price_drop" | "slippage_cap";
+          sentence?: string;
+          market?: SkipMeta["market"];
+          threshold?: SkipMeta["threshold"];
+        };
+        if (p.v === 1 && p.rule && p.sentence) {
+          return {
+            ...base,
+            kind: "skipped",
+            reason: p.sentence,
+            skip_meta: {
+              rule: p.rule,
+              market: p.market ?? {},
+              threshold: p.threshold ?? {},
+            },
+          };
+        }
+      } catch {
+        // fall through
+      }
+    }
+    return { ...base, kind: "skipped", reason: raw };
   }
   return { ...base, kind: "created" };
 }
@@ -255,9 +367,7 @@ function mapChainToCapability(
     // Pick the closest human label so existing copy renders.
     frequency: intervalToFrequency(BigInt(f.schedule.fields.interval_ms)),
     total_executions: Number(f.executions_max),
-    risk_rules: (f.risk_rules as unknown[]).map((r) =>
-      mapRiskRule(r),
-    ),
+    risk_rules: decodeRiskRules(f.risk_rules),
     // Approximate; the chain stores absolute expires_at, not days.
     expires_in_days: Math.max(
       1,
@@ -291,10 +401,36 @@ function mapChainToCapability(
   };
 }
 
-function mapRiskRule(_r: unknown): RiskRule {
-  // Empty for now — Stage 4 will encode and decode risk rules properly.
-  // Default to a benign price_drop placeholder so the UI doesn't blank.
-  return { type: "price_drop", window_hours: 1, threshold_pct: -5 };
+// Decode `vector<RiskRule>` from the AgentCapability shared object.
+// Sui RPC returns struct values as either `{ type, fields: {...} }` or as a
+// flat object — tolerate both. Threshold_bps is stored as magnitude (e.g. a
+// -5% price-drop rule is bps=500); we restore the sign on the way back.
+function decodeRiskRules(raw: unknown[]): RiskRule[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((entry): RiskRule[] => {
+    const inner = (entry as { fields?: unknown }).fields ?? entry;
+    const r = inner as {
+      rule_type?: number | string;
+      threshold_bps?: number | string;
+      window_ms?: number | string;
+    };
+    const ruleType = Number(r.rule_type);
+    const bps = Number(r.threshold_bps);
+    const windowMs = Number(r.window_ms);
+    if (ruleType === 0) {
+      return [
+        {
+          type: "price_drop",
+          window_hours: Math.max(1, Math.round(windowMs / 3_600_000)),
+          threshold_pct: -(bps / 100),
+        },
+      ];
+    }
+    if (ruleType === 1) {
+      return [{ type: "slippage_cap", threshold_pct: bps / 100 }];
+    }
+    return [];
+  });
 }
 
 function intervalToFrequency(ms: bigint): DCAIntent["frequency"] {

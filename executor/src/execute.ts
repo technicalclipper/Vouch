@@ -50,7 +50,7 @@ export async function executeOne(
   // 1. ATOMIC: assert_executable + assert_pool_in_scope + reserve_budget
   //    + vault::withdraw. Returns Coin<DBUSDC>.
   const dbusdcCoin = tx.moveCall({
-    target: `${CONFIG.vouchPackageId}::capability::draw_for_execution`,
+    target: `${CONFIG.vouchPackageLatest}::capability::draw_for_execution`,
     typeArguments: [CONFIG.deepbook.usdcType],
     arguments: [
       tx.object(cap.capId),
@@ -116,7 +116,7 @@ export async function executeOne(
   //    the actual fill price. Fixing this requires either a result-passing
   //    refactor or an oracle read; tracked for Stage 4.
   tx.moveCall({
-    target: `${CONFIG.vouchPackageId}::capability::log_action`,
+    target: `${CONFIG.vouchPackageLatest}::capability::log_action`,
     arguments: [
       tx.object(cap.capId),
       tx.pure.u64(amountIn),

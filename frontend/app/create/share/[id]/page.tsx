@@ -2,24 +2,53 @@
 
 import { use, useEffect, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { Card } from "../../../_components/Card";
 import { Button } from "../../../_components/Button";
 import { ToastHost, toast } from "../../../_components/Toast";
 import { useCapabilityById } from "../../../_components/useCapability";
 
 // C2 in DESIGN.md §5.
+// Two modes:
+//   1. Chain mode — `id` is a 0x… cap_id and the URL has ?token=<hex>&from=<name>
+//      (the chain doesn't store the raw token, just sha256(token), so the
+//      creator's URL carries it forward).
+//   2. Mock mode — `id` is a mock-store cap id; we read everything locally.
 export default function SharePage({
   params,
 }: {
   params: Promise<{ id: string }>;
 }) {
   const { id } = use(params);
-  const { cap, ready } = useCapabilityById(id);
+  const searchParams = useSearchParams();
+  const tokenFromUrl = searchParams.get("token") ?? undefined;
+  const fromName = searchParams.get("from") ?? undefined;
+  const labelFromUrl = searchParams.get("label") ?? undefined;
+  const isChainId = id.startsWith("0x") && id.length === 66;
+
+  const { cap, ready } = useCapabilityById(isChainId ? "" : id);
   const [origin, setOrigin] = useState("");
 
   useEffect(() => {
     setOrigin(window.location.origin);
   }, []);
+
+  // Chain mode: skip the mock-store load and render straight from URL params.
+  if (isChainId && tokenFromUrl) {
+    const url = origin
+      ? `${origin}/c/${tokenFromUrl}`
+      : `/c/${tokenFromUrl}`;
+    const qrSrc = `https://api.qrserver.com/v1/create-qr-code/?size=320x320&qzone=2&data=${encodeURIComponent(url)}`;
+    return (
+      <ShareView
+        url={url}
+        qrSrc={qrSrc}
+        token={tokenFromUrl}
+        recipientLabel={labelFromUrl}
+        funderName={fromName}
+      />
+    );
+  }
 
   if (!ready) return null;
   if (!cap) {
@@ -44,6 +73,31 @@ export default function SharePage({
   const qrSrc = `https://api.qrserver.com/v1/create-qr-code/?size=320x320&qzone=2&data=${encodeURIComponent(url)}`;
 
   return (
+    <ShareView
+      url={url}
+      qrSrc={qrSrc}
+      token={cap.token}
+      recipientLabel={cap.recipient_label}
+      funderName={cap.funder_name}
+    />
+  );
+}
+
+function ShareView({
+  url,
+  qrSrc,
+  token,
+  recipientLabel,
+  funderName,
+}: {
+  url: string;
+  qrSrc: string;
+  token: string;
+  recipientLabel?: string;
+  funderName?: string;
+}) {
+  void funderName; // currently unused on this screen but accepted for future copy
+  return (
     <main
       data-flow="creator"
       className="mx-auto w-full max-w-2xl px-6 py-12"
@@ -53,14 +107,13 @@ export default function SharePage({
           Your link is ready
         </p>
         <h1 className="mt-2 font-display text-4xl font-extrabold leading-tight">
-          Send this to {cap.recipient_label ?? "them"}.
+          Send this to {recipientLabel ?? "them"}.
         </h1>
       </header>
 
       <Card hero>
         <div className="flex flex-col items-center gap-5">
           <div className="nb-border rounded-[var(--radius)] bg-white p-3">
-            {/* External QR generator avoids adding a deps for now. */}
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={qrSrc}
@@ -86,7 +139,7 @@ export default function SharePage({
             >
               Copy link
             </Button>
-            <Link href={`/c/${cap.token}`}>
+            <Link href={`/c/${token}`}>
               <Button size="md" variant="ghost" fullWidth>
                 Preview as them
               </Button>

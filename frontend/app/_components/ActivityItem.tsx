@@ -70,8 +70,25 @@ function describe(event: ActivityEvent, funderName: string): string {
 
 function hasDetails(event: ActivityEvent): boolean {
   if (event.kind === "bought") return event.amount_in != null;
-  if (event.kind === "skipped") return !!event.reason;
+  if (event.kind === "skipped") return !!event.reason || !!event.skip_meta;
   return !!event.digest;
+}
+
+function describeRule(rule: "price_drop" | "slippage_cap"): string {
+  return rule === "price_drop"
+    ? "Price drop in the last hour"
+    : "Orderbook slippage too high";
+}
+
+function fmtPct(n?: number, digits = 2): string | undefined {
+  if (n == null || Number.isNaN(n)) return undefined;
+  const sign = n > 0 ? "+" : "";
+  return `${sign}${n.toFixed(digits)}%`;
+}
+
+function fmtPrice(n?: number): string | undefined {
+  if (n == null || Number.isNaN(n)) return undefined;
+  return `$${n.toFixed(4)}`;
 }
 
 function Details({ event }: { event: ActivityEvent }) {
@@ -91,8 +108,39 @@ function Details({ event }: { event: ActivityEvent }) {
       });
     }
   }
-  if (event.kind === "skipped" && event.reason) {
-    rows.push({ label: "Why", value: event.reason });
+  if (event.kind === "skipped") {
+    if (event.reason) {
+      rows.push({ label: "Why", value: event.reason });
+    }
+    const m = event.skip_meta;
+    if (m) {
+      rows.push({ label: "Rule", value: describeRule(m.rule) });
+      if (m.rule === "price_drop") {
+        const now = fmtPrice(m.market.suiUsdNow);
+        const prior = fmtPrice(m.market.suiUsdPrior);
+        if (now) rows.push({ label: "SUI now", value: now });
+        if (prior) rows.push({ label: "SUI 1h ago", value: prior });
+        const pct = fmtPct(m.market.pctChange);
+        const thr = fmtPct(m.threshold.pct);
+        if (pct && thr) {
+          rows.push({
+            label: "Change vs. limit",
+            value: `${pct} (limit ${thr})`,
+          });
+        }
+      } else {
+        const mid = fmtPrice(m.market.midPrice);
+        if (mid) rows.push({ label: "Mid price", value: mid });
+        const slip = m.market.estimatedSlippageBps;
+        const cap = m.threshold.bps;
+        if (slip != null && cap != null) {
+          rows.push({
+            label: "Slippage vs. cap",
+            value: `${(slip / 100).toFixed(2)}% (cap ${(cap / 100).toFixed(2)}%)`,
+          });
+        }
+      }
+    }
   }
   rows.push({
     label: "When",
@@ -102,7 +150,16 @@ function Details({ event }: { event: ActivityEvent }) {
     rows.push({
       label: "Tx",
       value: (
-        <span className="font-mono text-[13px] break-all">{event.digest}</span>
+        <a
+          href={`https://suiscan.xyz/testnet/tx/${event.digest}`}
+          target="_blank"
+          rel="noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          className="font-mono text-[13px] break-all underline decoration-2 underline-offset-2"
+          title="View on Suiscan"
+        >
+          {event.digest}
+        </a>
       ),
     });
   }

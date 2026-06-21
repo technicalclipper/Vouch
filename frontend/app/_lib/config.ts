@@ -15,7 +15,12 @@
 export type VouchConfig = {
   network: "testnet" | "mainnet" | "devnet" | "localnet";
   rpcUrl: string;
+  // `vouchPackageId` = ORIGINAL package id (stable across upgrades — use for
+  // type names + event MoveEventType filters). `vouchPackageLatest` = CURRENT
+  // package address (use for moveCall `target` so we can reach new functions
+  // added in an upgrade). Equal on first publish; diverge after first upgrade.
   vouchPackageId: string;
+  vouchPackageLatest: string;
   vouchUpgradeCapId: string;
   deepbook: {
     packageId: string;
@@ -47,6 +52,9 @@ export const CONFIG: VouchConfig = {
   rpcUrl: "https://fullnode.testnet.sui.io",
   vouchPackageId:
     "0xbb7d414c3f94da7efd1496f9c2c390662beca4e0eabea3831e15bc22ab2bcffd",
+  // Upgraded 2026-06-21 via `sui client upgrade` — v2 adds `new_risk_rule`.
+  vouchPackageLatest:
+    "0x8b8c8e7e3b0db9aac8dd4e5d0d4a6e610c927a9775dec3bb86b02f6318e592c5",
   vouchUpgradeCapId:
     "0x7d45468c33732c137a6d52fc34e1f58d71e1c84170986b717032970fee453e7c",
   deepbook: {

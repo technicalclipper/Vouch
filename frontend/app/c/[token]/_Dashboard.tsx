@@ -11,10 +11,23 @@ import { ActivityItem } from "../../_components/ActivityItem";
 import { Modal } from "../../_components/Modal";
 import { formatSui, formatUsd } from "../../_lib/format";
 import { revoke, runNow } from "../../_lib/mockStore";
-import { runNowOnChain } from "../../_lib/executor";
+import { runNowOnChain, CapNotDueError } from "../../_lib/executor";
 import { toast } from "../../_components/Toast";
 import { useZkLogin } from "../../_lib/zklogin/useZkLogin";
 import { revokeCapability } from "../../_lib/zklogin/revoke";
+
+// Friendly relative timestamp for "next buy" copy. Sub-minute → "in a moment".
+function formatUntil(at: number): string {
+  const ms = at - Date.now();
+  if (ms <= 0) return "now";
+  const m = Math.round(ms / 60_000);
+  if (m < 1) return "in a moment";
+  if (m < 60) return `in ${m} min`;
+  const h = Math.round(m / 60);
+  if (h < 24) return `in ${h}h`;
+  const d = Math.round(h / 24);
+  return `in ${d}d`;
+}
 
 // R3 + R4 in DESIGN.md §5.
 // `chainMode=true` swaps mock actions for real executor + chain-state reads.
@@ -28,6 +41,7 @@ export function Dashboard({
   const [confirmStop, setConfirmStop] = useState(false);
   const [busy, setBusy] = useState(false);
   const [stopping, setStopping] = useState(false);
+  const [controlsOpen, setControlsOpen] = useState(false);
   const { session } = useZkLogin();
   const isStopped = cap.status === "stopped";
   const isDone = cap.status === "done";
@@ -53,7 +67,11 @@ export function Dashboard({
         );
       }
     } catch (err) {
-      toast(`Run failed: ${(err as Error).message}`, "info");
+      if (err instanceof CapNotDueError) {
+        toast(`Not due yet — next buy ${formatUntil(err.nextExecutionAt)}.`, "info");
+      } else {
+        toast(`Run failed: ${(err as Error).message}`, "info");
+      }
     } finally {
       setBusy(false);
     }
@@ -131,34 +149,56 @@ export function Dashboard({
         </div>
       </Card>
 
-      {/* Demo-only execution controls. Hidden from real users but useful for
-          showing the agent in action during the live demo (CLAUDE.md §5 §6). */}
+      {/* Execution controls — collapsed by default so the dashboard stays
+          clean for normal users. Operator/demo expands to trigger manually. */}
       {!isStopped && !isDone ? (
         <Card fill="soft" className="!p-4">
-          <p className="text-sm font-semibold uppercase tracking-wide text-muted">
-            Demo controls
-          </p>
-          <p className="mt-1 text-sm text-muted">
-            Trigger the agent without waiting for the schedule.
-          </p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            <Button
-              size="md"
-              variant="primary"
-              disabled={busy}
-              onClick={() => handleRunNow()}
+          <button
+            type="button"
+            onClick={() => setControlsOpen((v) => !v)}
+            aria-expanded={controlsOpen}
+            className="w-full flex items-center justify-between gap-3 text-left nb-focus"
+          >
+            <p className="text-sm font-semibold uppercase tracking-wide text-muted">
+              More
+            </p>
+            <span
+              aria-hidden
+              className={`text-ink transition-transform ${
+                controlsOpen ? "rotate-90" : ""
+              }`}
             >
-              {busy ? "Running…" : "Run now"}
-            </Button>
-            <Button
-              size="md"
-              variant="ghost"
-              disabled={busy}
-              onClick={() => handleRunNow("skip")}
-            >
-              Run with simulated price drop
-            </Button>
-          </div>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                <path
+                  d="M9 6l6 6-6 6"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </span>
+          </button>
+          {controlsOpen ? (
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button
+                size="md"
+                variant="primary"
+                disabled={busy}
+                onClick={() => handleRunNow()}
+              >
+                {busy ? "Running…" : "Run now"}
+              </Button>
+              <Button
+                size="md"
+                variant="ghost"
+                disabled={busy}
+                onClick={() => handleRunNow("skip")}
+              >
+                Run with simulated price drop
+              </Button>
+            </div>
+          ) : null}
         </Card>
       ) : null}
 

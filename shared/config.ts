@@ -9,8 +9,13 @@ export type VouchConfig = {
   network: "testnet" | "mainnet" | "devnet" | "localnet";
   rpcUrl: string;
 
-  // Our Move package, published via `sui client publish` from /contracts.
+  // Our Move package. `vouchPackageId` is the ORIGINAL package id (used for
+  // type names + event MoveEventType filters — Sui keeps these stable across
+  // upgrades). `vouchPackageLatest` is the CURRENT package address (used as
+  // the `target` for moveCalls — required to reach functions added in an
+  // upgrade). Equal on first publish; diverge after the first `sui client upgrade`.
   vouchPackageId: string;
+  vouchPackageLatest: string;
   vouchUpgradeCapId: string;
 
   // Deepbook v3. Verified against the @mysten/deepbook-v3 SDK constants.
@@ -67,6 +72,9 @@ export const CONFIG: VouchConfig = {
   // Modules: vouch::capability, vouch::vault
   vouchPackageId:
     "0xbb7d414c3f94da7efd1496f9c2c390662beca4e0eabea3831e15bc22ab2bcffd",
+  // Upgraded 2026-06-21 via `sui client upgrade` — v2 adds `new_risk_rule`.
+  vouchPackageLatest:
+    "0x8b8c8e7e3b0db9aac8dd4e5d0d4a6e610c927a9775dec3bb86b02f6318e592c5",
   vouchUpgradeCapId:
     "0x7d45468c33732c137a6d52fc34e1f58d71e1c84170986b717032970fee453e7c",
 

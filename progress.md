@@ -94,6 +94,25 @@
   - revoke (sweep to funder) — tx `Ghw2vgxJwFcwuLBQjeYkwPBKmQ68JYW6P1APUjwYD6KP`; `CapabilityRevoked` `{ refunded: 75M }`.
 - This run proves invariants #1 (budget cap), #2 (pool scope), #3 (revoke/expiry assertion), and #4 (every action emits an event). Invariant #5 (no seed phrase) is a recipient-flow property handled in Stage 3.
 
+### Stage 5 follow-up — Move v2 upgrade + per-cap risk_rules encoded on chain ✅
+
+- **Move package upgraded to v2** via `sui client upgrade` (UpgradeCap `0x7d454…`). Adds public constructor `capability::new_risk_rule(rule_type, threshold_bps, window_ms): RiskRule` so PTBs can materialise `RiskRule` values without hitting Sui's `InvalidUsageOfPureArg` ban on pure-arg struct vectors.
+  - v1 (original) package id: `0xbb7d414c3f94da7efd1496f9c2c390662beca4e0eabea3831e15bc22ab2bcffd` — KEPT for type names + event MoveEventType filters (Sui keeps these stable across upgrades).
+  - v2 (current) package id: `0x8b8c8e7e3b0db9aac8dd4e5d0d4a6e610c927a9775dec3bb86b02f6318e592c5` — used for all moveCall `target:` fields.
+  - Sui CLI bumped 1.73.0 → 1.73.1 via `brew upgrade sui` to clear a protocol-version mismatch (network was on 126, binary on 125).
+- **Config split** in `shared/config.ts` and `frontend/app/_lib/config.ts`: added `vouchPackageLatest` alongside `vouchPackageId`. Type comment documents the rule (originals for types/events, latest for moveCall targets).
+- **moveCall targets switched to `vouchPackageLatest`** across:
+  - `frontend/app/_lib/chain/createCapability.ts` (`vault::create_and_share`, `capability::new_risk_rule`, `capability::create_pending`)
+  - `frontend/app/_lib/chain/revokeCapability.ts` (`capability::revoke`)
+  - `executor/src/execute.ts` (`capability::draw_for_execution`, `capability::log_action`)
+  - `executor/src/skip.ts` (`capability::log_skip`)
+  - `executor/src/sponsor.ts` (sponsored `capability::activate`, sponsored `capability::revoke`)
+  - `scripts/dca-seed.ts` and `scripts/lifecycle.ts`
+  - Event-type filter constants in `executor/src/cap.ts` (`PKG`) and `frontend/app/_lib/chain.ts` (`PKG`) intentionally still use `vouchPackageId` — events keep the original module address.
+- **Create PTB now encodes real `risk_rules`**: `createCapability.ts` calls `new_risk_rule` per intent rule and packs results via `tx.makeMoveVec` with elementType `${vouchPackageId}::capability::RiskRule`. No more empty vector placeholder.
+- **Executor reads per-cap thresholds**: `executor/src/cap.ts` now exports `CapRiskRule[]` and parses `f.risk_rules` (handles both `{type, fields}` and flat shapes). `executor/src/risk.ts` `resolveThresholds(cap)` prefers on-chain rules; falls back to the prior defaults (`-5% / 1h`, `100 bps`) only when the cap predates the upgrade and carries an empty vector. If a rule type is absent on a v2 cap, the executor simply skips that check — recipient choice respected.
+- **Verification:** `npx tsc --noEmit` clean for both `frontend/` and `executor/`. End-to-end retest pending (next demo run).
+
 ---
 
 ## In progress

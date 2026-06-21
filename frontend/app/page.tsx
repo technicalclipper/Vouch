@@ -4,11 +4,32 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Card } from "./_components/Card";
 import { Button } from "./_components/Button";
-import { resetAll } from "./_lib/mockStore";
+import { pickSampleChainCaps } from "./_lib/chain";
 
 export default function DevLanding() {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+  // Resolve recipient demo links to real on-chain caps. Hidden until a
+  // pending or active cap is found so we never surface dead mock paths.
+  const [pendingHref, setPendingHref] = useState<string | undefined>(undefined);
+  const [activeHref, setActiveHref] = useState<string | undefined>(undefined);
+  const [chainState, setChainState] = useState<"loading" | "ready" | "empty">(
+    "loading",
+  );
+  useEffect(() => {
+    let cancelled = false;
+    pickSampleChainCaps()
+      .then((s) => {
+        if (cancelled) return;
+        if (s.pending) setPendingHref(`/c/${s.pending.id}`);
+        if (s.active) setActiveHref(`/c/${s.active.id}`);
+        setChainState(s.pending || s.active ? "ready" : "empty");
+      })
+      .catch(() => {
+        if (!cancelled) setChainState("empty");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <main className="relative mx-auto w-full max-w-6xl px-6 py-10 sm:py-14">
@@ -69,7 +90,11 @@ export default function DevLanding() {
             Pick a side to demo
           </h2>
           <p className="hidden sm:block text-sm text-muted">
-            Data is mocked client-side · reset anytime
+            {chainState === "loading"
+              ? "Loading on-chain caps…"
+              : chainState === "ready"
+                ? "Live testnet data · reads on-chain capabilities"
+                : "No on-chain caps yet — create one to populate"}
           </p>
         </div>
 
@@ -89,16 +114,32 @@ export default function DevLanding() {
             </p>
 
             <div className="mt-6 grid gap-3">
-              <Link href="/c/pending" className="block">
-                <Button variant="primary" fullWidth>
-                  First-time activation →
+              {pendingHref ? (
+                <Link href={pendingHref} className="block">
+                  <Button variant="primary" fullWidth>
+                    First-time activation →
+                  </Button>
+                </Link>
+              ) : (
+                <Button variant="primary" fullWidth disabled>
+                  {chainState === "loading"
+                    ? "Looking for a pending link…"
+                    : "No pending link on chain"}
                 </Button>
-              </Link>
-              <Link href="/c/demo" className="block">
-                <Button variant="ghost" fullWidth>
-                  Already-active dashboard
+              )}
+              {activeHref ? (
+                <Link href={activeHref} className="block">
+                  <Button variant="ghost" fullWidth>
+                    Already-active dashboard
+                  </Button>
+                </Link>
+              ) : (
+                <Button variant="ghost" fullWidth disabled>
+                  {chainState === "loading"
+                    ? "Looking for an active delegation…"
+                    : "No active delegation on chain"}
                 </Button>
-              </Link>
+              )}
             </div>
 
             <ul className="mt-6 flex flex-col gap-2 text-sm text-muted">
@@ -160,27 +201,6 @@ export default function DevLanding() {
         </div>
       </section>
 
-      {/* ---------- FOOTER ---------- */}
-      <footer className="mt-16 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-t-[2.5px] border-ink/15 pt-6">
-        <p className="text-sm text-muted">
-          Mock store key:{" "}
-          <code className="font-mono nb-border bg-bg px-1.5 py-0.5 rounded text-xs">
-            vouch.mock.v1
-          </code>{" "}
-          in <code className="font-mono">localStorage</code>
-        </p>
-        <Button
-          variant="ghost"
-          size="md"
-          onClick={() => {
-            if (!mounted) return;
-            resetAll();
-            window.location.reload();
-          }}
-        >
-          Reset mock data
-        </Button>
-      </footer>
     </main>
   );
 }

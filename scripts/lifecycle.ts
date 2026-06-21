@@ -88,10 +88,11 @@ async function main() {
   const kp = loadKeypairFromSuiKeystore();
   const me = kp.toSuiAddress();
   const client = new SuiClient({ url: getFullnodeUrl("testnet") });
-  const pkg = CONFIG.vouchPackageId;
+  const pkg = CONFIG.vouchPackageId; // original id — type names + event types
+  const pkgLatest = CONFIG.vouchPackageLatest; // current id — moveCall targets
 
   console.log(`signer: ${me}`);
-  console.log(`package: ${pkg}`);
+  console.log(`package: ${pkg} (latest ${pkgLatest})`);
 
   // The token the "recipient" will present at activation. Hash is stored on chain.
   const token = new TextEncoder().encode("demo-token-lifecycle");
@@ -121,7 +122,7 @@ async function main() {
 
     // vault::create_and_share<SUI>(coin) → ID
     const vaultIdArg = tx.moveCall({
-      target: `${pkg}::vault::create_and_share`,
+      target: `${pkgLatest}::vault::create_and_share`,
       typeArguments: [SUI_TYPE],
       arguments: [coin],
     });
@@ -138,7 +139,7 @@ async function main() {
     });
 
     tx.moveCall({
-      target: `${pkg}::capability::create_pending`,
+      target: `${pkgLatest}::capability::create_pending`,
       arguments: [
         tx.pure.address(me), // agent_pubkey — in the test we are the agent
         vaultIdArg, // vault_id
@@ -193,7 +194,7 @@ async function main() {
   {
     const tx = new Transaction();
     tx.moveCall({
-      target: `${pkg}::capability::activate`,
+      target: `${pkgLatest}::capability::activate`,
       arguments: [
         tx.object(capId),
         tx.pure(bcs.vector(bcs.U8).serialize(Array.from(token)).toBytes()),
@@ -213,7 +214,7 @@ async function main() {
   {
     const tx = new Transaction();
     const coin = tx.moveCall({
-      target: `${pkg}::capability::draw_for_execution`,
+      target: `${pkgLatest}::capability::draw_for_execution`,
       typeArguments: [SUI_TYPE],
       arguments: [
         tx.object(capId),
@@ -228,7 +229,7 @@ async function main() {
     tx.transferObjects([coin], tx.pure.address(me));
 
     tx.moveCall({
-      target: `${pkg}::capability::log_action`,
+      target: `${pkgLatest}::capability::log_action`,
       arguments: [
         tx.object(capId),
         tx.pure.u64(EXEC_AMOUNT),
@@ -254,7 +255,7 @@ async function main() {
       "SUI dropped 6.2% in the last hour, exceeding your 5% threshold; deferring this week's buy.",
     );
     tx.moveCall({
-      target: `${pkg}::capability::log_skip`,
+      target: `${pkgLatest}::capability::log_skip`,
       arguments: [
         tx.object(capId),
         tx.pure(bcs.vector(bcs.U8).serialize(Array.from(reason)).toBytes()),
@@ -274,7 +275,7 @@ async function main() {
   {
     const tx = new Transaction();
     tx.moveCall({
-      target: `${pkg}::capability::revoke`,
+      target: `${pkgLatest}::capability::revoke`,
       typeArguments: [SUI_TYPE],
       arguments: [
         tx.object(capId),

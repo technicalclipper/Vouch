@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Bricolage_Grotesque, Inter } from "next/font/google";
 import "./globals.css";
+import { WalletProviders } from "./_lib/wallet/Providers";
 
 const display = Bricolage_Grotesque({
   variable: "--font-display",
@@ -31,7 +32,7 @@ export default function RootLayout({
       className={`${display.variable} ${body.variable} h-full`}
     >
       <body className="min-h-full flex flex-col bg-bg text-ink">
-        {children}
+        <WalletProviders>{children}</WalletProviders>
       </body>
     </html>
   );

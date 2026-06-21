@@ -2,10 +2,20 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import {
+  useCurrentAccount,
+  useSignAndExecuteTransaction,
+} from "@mysten/dapp-kit";
 import { Card } from "../_components/Card";
 import { Button } from "../_components/Button";
+import { ConnectWallet } from "../_components/ConnectWallet";
 import { ToastHost, toast } from "../_components/Toast";
 import { createCapability } from "../_lib/mockStore";
+import { parseIntent as parseIntentLlm } from "../_lib/executor";
+import { createCapabilityOnChain } from "../_lib/chain/createCapability";
+import { setCapLabel } from "../_lib/capLabels";
+import { useDbusdcBalance } from "../_lib/wallet/useDbusdcBalance";
+import { CONFIG } from "../_lib/config";
 import type { DCAIntent } from "../_lib/types";
 import { formatUsd } from "../_lib/format";
 
@@ -19,18 +29,79 @@ export default function CreatePage() {
   const [recipientLabel, setRecipientLabel] = useState("Mom");
   const [funderName, setFunderName] = useState("Alex");
   const [parsing, setParsing] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [demoFastInterval, setDemoFastInterval] = useState(false);
+  const account = useCurrentAccount();
+  const { mutateAsync: signAndExecute } = useSignAndExecuteTransaction();
+  const balance = useDbusdcBalance(account?.address);
 
-  function parse() {
-    // Stub: in Stage 5 this calls Claude/OpenAI and validates against a Zod schema.
+  async function parse() {
     setParsing(true);
-    setTimeout(() => {
-      setIntent(parseNL(nl));
-      setParsing(false);
+    try {
+      const parsed = await parseIntentLlm(nl);
+      setIntent(parsed);
       toast("Parsed — review and edit below.", "info");
-    }, 600);
+    } catch (err) {
+      // Fall back to the heuristic so the form still fills in something
+      // sensible if the executor / OpenAI is unreachable.
+      // eslint-disable-next-line no-console
+      console.warn("[intent] LLM parse failed, falling back to heuristic:", err);
+      setIntent(parseNL(nl));
+      toast(
+        `LLM parser unavailable — used heuristic. (${(err as Error).message})`,
+        "info",
+      );
+    } finally {
+      setParsing(false);
+    }
   }
 
-  function create() {
+  async function create() {
+    if (creating) return;
+    // Chain mode: wallet connected → real PTB.
+    if (account) {
+      if (balance.human < total) {
+        toast(
+          `You need ${formatUsd(total)} DBUSDC but have ${formatUsd(balance.human)}. Top up first.`,
+          "info",
+        );
+        return;
+      }
+      setCreating(true);
+      try {
+        const r = await createCapabilityOnChain({
+          intent,
+          agentAddress: CONFIG.agent.address,
+          userAddress: account.address,
+          demoFastInterval,
+          signAndExecute,
+        });
+        // Persist creator-private metadata (label + funder name) so the
+        // dashboard can render them after navigation/reload. The chain
+        // doesn't know about either by design.
+        setCapLabel(r.cap_id, {
+          label: recipientLabel.trim() || undefined,
+          funderName: funderName.trim() || undefined,
+          // Raw token isn't on chain — persist so the dashboard drill-in
+          // can re-render the share link anytime, not just on /share.
+          token: r.token,
+        });
+        const qs = new URLSearchParams({
+          token: r.token,
+          from: funderName.trim() || "Alex",
+        });
+        if (recipientLabel.trim()) qs.set("label", recipientLabel.trim());
+        router.push(`/create/share/${r.cap_id}?${qs.toString()}`);
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error("[create] on-chain create failed:", err);
+        toast(`Create failed: ${(err as Error).message}`, "info");
+      } finally {
+        setCreating(false);
+      }
+      return;
+    }
+    // No wallet: mock store fallback (keeps the demo nav working).
     const cap = createCapability({
       intent,
       funder_name: funderName.trim() || "Alex",
@@ -40,19 +111,23 @@ export default function CreatePage() {
   }
 
   const total = intent.amount_per_execution * intent.total_executions;
+  const insufficient = !!account && !balance.loading && balance.human < total;
 
   return (
     <main
       data-flow="creator"
       className="mx-auto w-full max-w-5xl px-6 py-12"
     >
-      <header className="mb-8">
-        <p className="text-sm font-semibold uppercase tracking-widest text-muted">
-          Create
-        </p>
-        <h1 className="mt-2 font-display text-4xl font-extrabold leading-tight">
-          Set up a delegation.
-        </h1>
+      <header className="mb-8 flex items-start justify-between gap-4">
+        <div>
+          <p className="text-sm font-semibold uppercase tracking-widest text-muted">
+            Create
+          </p>
+          <h1 className="mt-2 font-display text-4xl font-extrabold leading-tight">
+            Set up a delegation.
+          </h1>
+        </div>
+        <ConnectWallet />
       </header>
 
       <div className="grid gap-6 md:grid-cols-2">
@@ -189,9 +264,53 @@ export default function CreatePage() {
             </p>
           </div>
 
-          <div className="mt-6">
-            <Button variant="primary" fullWidth onClick={create}>
-              Create link
+          <div className="mt-6 flex flex-col gap-2">
+            {account && balance.loading ? (
+              <p className="text-sm text-muted">Checking DBUSDC balance…</p>
+            ) : null}
+            {account && !balance.loading ? (
+              <p className="text-sm text-muted">
+                Wallet DBUSDC: {formatUsd(balance.human)}
+                {insufficient ? (
+                  <span className="ml-2 font-semibold text-danger">
+                    (need {formatUsd(total)})
+                  </span>
+                ) : null}
+              </p>
+            ) : null}
+            {!account ? (
+              <p className="text-sm text-muted">
+                Connect a wallet to sign the create tx. Without one, the link is
+                a local mock.
+              </p>
+            ) : null}
+            {account ? (
+              <label className="flex items-start gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="mt-1 h-4 w-4 nb-border nb-focus"
+                  checked={demoFastInterval}
+                  onChange={(e) => setDemoFastInterval(e.target.checked)}
+                />
+                <span>
+                  <span className="font-semibold">Demo mode</span>
+                  <span className="text-muted">
+                    {" "}— fire every 30s instead of {intent.frequency}. Use for live demos.
+                  </span>
+                </span>
+              </label>
+            ) : null}
+            <Button
+              variant="primary"
+              fullWidth
+              onClick={create}
+              disabled={creating || insufficient}
+            >
+              {creating
+                ? "Signing + sending…"
+                : account
+                  ? "Create link (wallet-signed)"
+                  : "Create link (mock)"}
             </Button>
           </div>
         </Card>

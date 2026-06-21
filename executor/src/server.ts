@@ -22,6 +22,7 @@ import {
   submitActivate,
   submitRevoke,
 } from "./sponsor.ts";
+import { parseIntent } from "./intent.ts";
 
 export interface ServerDeps {
   client: SuiClient;
@@ -196,6 +197,22 @@ export function buildServer({ client, kp }: ServerDeps) {
     } catch (err) {
       return reply.code(500).send({ error: (err as Error).message });
     }
+  });
+
+  // ---- Intent parser (NL → DCAIntent JSON) ------------------------------
+  // CLAUDE.md §7.2: the creator types a freeform sentence, OpenAI returns
+  // strict JSON, we validate it against the Zod schema, browser previews it.
+  app.post<{ Body: { text: string } }>("/intent/parse", async (req, reply) => {
+    const text = req.body?.text?.trim();
+    if (!text) return reply.code(400).send({ error: "text required" });
+    if (text.length > 1000) {
+      return reply.code(400).send({ error: "text too long" });
+    }
+    const r = await parseIntent(text);
+    if (!r.ok) {
+      return reply.code(422).send({ error: r.error, details: r.details });
+    }
+    return { intent: r.intent };
   });
 
   return app;

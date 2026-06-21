@@ -81,7 +81,7 @@ async function main() {
     balance: BUDGET_TOTAL,
   });
   const vaultIdArg = tx.moveCall({
-    target: `${CONFIG.vouchPackageId}::vault::create_and_share`,
+    target: `${CONFIG.vouchPackageLatest}::vault::create_and_share`,
     typeArguments: [CONFIG.deepbook.usdcType],
     arguments: [dbusdcCoin],
   });
@@ -93,7 +93,7 @@ async function main() {
   });
 
   tx.moveCall({
-    target: `${CONFIG.vouchPackageId}::capability::create_pending`,
+    target: `${CONFIG.vouchPackageLatest}::capability::create_pending`,
     arguments: [
       tx.pure.address(me), // agent_pubkey (us, for testing)
       vaultIdArg,
@@ -142,7 +142,7 @@ async function main() {
     // ---- 2. Activate (same signer plays the recipient here) ----
     const tx2 = new Transaction();
     tx2.moveCall({
-      target: `${CONFIG.vouchPackageId}::capability::activate`,
+      target: `${CONFIG.vouchPackageLatest}::capability::activate`,
       arguments: [
         tx2.object(cap.objectId),
         tx2.pure(

@@ -12,9 +12,55 @@ import type { Capability } from "./types";
 import {
   loadChainCapability,
   loadChainCapabilityByToken,
+  loadChainCapabilitiesByFunder,
 } from "./chain";
 
 const DEFAULT_POLL_MS = 5000;
+
+// Creator dashboard hook. Lists all caps where funder == connected wallet.
+// `address` undefined → no fetch (wallet not connected yet).
+export function useChainCapabilitiesByFunder(
+  address: string | undefined,
+  pollMs: number = DEFAULT_POLL_MS,
+) {
+  const [caps, setCaps] = useState<Capability[]>([]);
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    if (!address) {
+      setCaps([]);
+      setReady(true);
+      return;
+    }
+    let cancelled = false;
+    let inFlight = false;
+    const tick = async () => {
+      if (inFlight) return;
+      inFlight = true;
+      try {
+        const list = await loadChainCapabilitiesByFunder(address);
+        if (!cancelled) {
+          setCaps(list);
+          setReady(true);
+        }
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error("[useChainCapabilitiesByFunder]", err);
+        if (!cancelled) setReady(true);
+      } finally {
+        inFlight = false;
+      }
+    };
+    tick();
+    const h = setInterval(tick, pollMs);
+    return () => {
+      cancelled = true;
+      clearInterval(h);
+    };
+  }, [address, pollMs]);
+
+  return { caps, ready };
+}
 
 export function useChainCapabilityById(
   id: string,

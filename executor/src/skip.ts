@@ -23,7 +23,7 @@ export async function submitSkip(
 
   const tx = new Transaction();
   tx.moveCall({
-    target: `${CONFIG.vouchPackageId}::capability::log_skip`,
+    target: `${CONFIG.vouchPackageLatest}::capability::log_skip`,
     arguments: [
       tx.object(cap.capId),
       tx.pure(bcs.vector(bcs.U8).serialize(Array.from(reasonBytes)).toBytes()),

@@ -66,6 +66,17 @@ module vouch::capability {
         window_ms: u64,      // for price_drop window; 0 for slippage_cap
     }
 
+    /// Public constructor so PTBs can materialise RiskRule values inside a
+    /// transaction (BCS pure-arg path can't construct struct vectors). Used
+    /// by the creator frontend's create PTB to encode per-cap thresholds.
+    public fun new_risk_rule(
+        rule_type: u8,
+        threshold_bps: u64,
+        window_ms: u64,
+    ): RiskRule {
+        RiskRule { rule_type, threshold_bps, window_ms }
+    }
+
     /// The capability object. Shared after creation so both the agent (mutates
     /// during execution) and the owner/funder (revokes) can pass &mut into PTBs.
     public struct AgentCapability has key {

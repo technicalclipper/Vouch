@@ -85,7 +85,7 @@ export async function prepareActivate(
   ]);
 
   tx.moveCall({
-    target: `${CONFIG.vouchPackageId}::capability::activate`,
+    target: `${CONFIG.vouchPackageLatest}::capability::activate`,
     arguments: [
       tx.object(capId),
       tx.pure(bcs.vector(bcs.U8).serialize(Array.from(tokenBytes)).toBytes()),
@@ -170,7 +170,7 @@ export async function prepareRevoke(
   ]);
 
   tx.moveCall({
-    target: `${CONFIG.vouchPackageId}::capability::revoke`,
+    target: `${CONFIG.vouchPackageLatest}::capability::revoke`,
     typeArguments: [CONFIG.deepbook.usdcType],
     arguments: [tx.object(capId), tx.object(vaultId), tx.object(CLOCK)],
   });

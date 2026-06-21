@@ -8,6 +8,7 @@ import {
 } from "../../_lib/useChainCapability";
 import { ActivationView } from "./_ActivationView";
 import { Dashboard } from "./_Dashboard";
+import { WalletPill } from "./_WalletPill";
 import { ToastHost } from "../../_components/Toast";
 import type { Capability } from "../../_lib/types";
 
@@ -39,19 +40,24 @@ export default function RecipientPage({
       : "chain-token";
 
   return (
-    <div
-      data-flow="recipient"
-      className="mx-auto w-full max-w-[520px] px-5 py-10 sm:py-14 lg:py-20"
-    >
-      {mode === "mock" ? (
-        <MockBranch token={token} />
-      ) : mode === "chain-id" ? (
-        <ChainByIdBranch capId={token} />
-      ) : (
-        <ChainByTokenBranch token={token} />
-      )}
-      <ToastHost />
-    </div>
+    <>
+      {/* Floats fixed top-right, outside the narrow column. Only renders when
+          there's an active zkLogin session. */}
+      <WalletPill />
+      <div
+        data-flow="recipient"
+        className="mx-auto w-full max-w-[520px] px-5 py-10 sm:py-14 lg:py-20"
+      >
+        {mode === "mock" ? (
+          <MockBranch token={token} />
+        ) : mode === "chain-id" ? (
+          <ChainByIdBranch capId={token} />
+        ) : (
+          <ChainByTokenBranch token={token} />
+        )}
+        <ToastHost />
+      </div>
+    </>
   );
 }
 
