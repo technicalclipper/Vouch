@@ -6,7 +6,7 @@
   "description": "Vouch executor — off-chain agent that polls due capabilities, evaluates risk, and submits execution PTBs to Sui testnet. CLAUDE.md §5.",
   "scripts": {
     "dev": "tsx --env-file=.env src/index.ts",
-    "start": "tsx --env-file=.env src/index.ts",
+    "start": "tsx src/index.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
